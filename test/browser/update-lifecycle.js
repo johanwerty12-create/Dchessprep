@@ -1,0 +1,52 @@
+import { listRecords } from './app-db.js';
+const output = document.querySelector('#output');
+const log = (s) => output.textContent += s + '\n';
+const check = (ok, s) => { if (!ok) throw new Error(s); log('PASS ' + s); };
+const normalized = (rs) => JSON.stringify([...rs].sort((a,b) => a.id.localeCompare(b.id)));
+const wait = async (fn) => { const start = performance.now(); while (!await fn()) { if (performance.now()-start > 15000) throw new Error('Lifecycle condition timed out'); await new Promise(r => setTimeout(r,50)); } };
+const action = (id, run) => document.querySelector(id).onclick = async () => { output.textContent = ''; try { await run(); } catch (e) { log('FAIL ' + e.message); } };
+const key = 'chessdesk-qa-sw-baseline';
+action('#baseline', async () => {
+  await navigator.serviceWorker.ready;
+  const records = await listRecords();
+  check(records.some(r => r.kind === 'review') && records.filter(r => r.kind === 'game').every(r => r.name.startsWith('QA Acceptance')), 'identified disposable acceptance library');
+  const keys = await caches.keys();
+  const app = keys.find(k => k.startsWith('chessdesk-app-'));
+  const engine = keys.find(k => k.startsWith('chessdesk-engine-'));
+  check(!!app && !!engine, 'installed app shell and engine caches exist');
+  localStorage.setItem(key, JSON.stringify({ records: normalized(records), app, engine }));
+  log('BASELINE ' + records.length + ' records; ' + app + '; ' + engine);
+});
+action('#waiting', async () => {
+  const baseline = JSON.parse(localStorage.getItem(key));
+  const registration = await navigator.serviceWorker.ready;
+  await registration.update();
+  await wait(() => registration.waiting?.state === 'installed');
+  check(!!registration.active && registration.waiting !== registration.active, 'new worker waits while existing clients stay open');
+  const keys = await caches.keys();
+  check(keys.includes(baseline.app) && keys.includes(baseline.engine), 'waiting update retains old app shell and authentic engine cache');
+  check(keys.filter(k => k.startsWith('chessdesk-app-')).length === 2, 'both complete app versions coexist during update');
+  check(normalized(await listRecords()) === baseline.records, 'waiting update leaves exact saved records unchanged');
+});
+action('#activated', async () => {
+  const baseline = JSON.parse(localStorage.getItem(key));
+  const registration = await navigator.serviceWorker.ready;
+  await wait(async () => !(await caches.keys()).includes(baseline.app));
+  check(registration.active?.state === 'activated' && !registration.waiting, 'new worker activates after old clients close');
+  const keys = await caches.keys();
+  check(keys.filter(k => k.startsWith('chessdesk-app-')).length === 1 && keys.includes(baseline.engine), 'activation removes stale app cache and preserves engine cache');
+  check(normalized(await listRecords()) === baseline.records, 'activation preserves every saved record exactly');
+});
+action('#failed', async () => {
+  const baseline = JSON.parse(localStorage.getItem(key));
+  const registration = await navigator.serviceWorker.ready;
+  const active = registration.active;
+  await registration.update();
+  const candidate = registration.installing;
+  check(!!candidate, 'failure-injected candidate starts installation');
+  await wait(() => candidate.state === 'redundant');
+  check(registration.active === active && !registration.waiting, 'failed installation keeps the current worker active');
+  const keys = await caches.keys();
+  check(keys.filter(k => k.startsWith('chessdesk-app-')).length === 1 && keys.includes(baseline.app) && keys.includes(baseline.engine), 'failed candidate cleans partial cache and retains installed app and engine');
+  check(normalized(await listRecords()) === baseline.records, 'failed installation preserves every saved record exactly');
+});

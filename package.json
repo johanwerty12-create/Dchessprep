@@ -1,0 +1,26 @@
+{
+  "name": "dchessprep",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "An offline-first chess preparation and analysis workspace.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/package-engine.mjs",
+    "preview": "vite preview",
+    "test": "node --test test/*.test.mjs",
+    "verify:engine": "node scripts/verify-engine.mjs",
+    "check:pages": "node scripts/check-pages-build.mjs",
+    "check:assets": "node scripts/check-piece-assets.mjs",
+    "icons:generate": "node scripts/generate-pwa-icons.mjs"
+  },
+  "dependencies": {
+    "chess.js": "1.4.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "stockfish": "18.0.0",
+    "vite": "8.3.4"
+  }
+}

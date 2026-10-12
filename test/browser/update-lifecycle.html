@@ -1,0 +1,9 @@
+<!doctype html><meta charset="utf-8"><title>Service-worker lifecycle QA</title>
+<h1>Service-worker update on a disposable origin</h1>
+<p>Run only on the isolated acceptance origin. This reads records, records a baseline, requests an update and checks data/cache preservation. It never clears IndexedDB.</p>
+<button id="baseline">Save update baseline</button>
+<button id="waiting">Verify waiting update</button>
+<button id="activated">Verify activated update</button>
+<button id="failed">Verify failed installation</button>
+<pre id="output" role="status"></pre>
+<script type="module" src="./update-lifecycle.js"></script>

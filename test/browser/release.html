@@ -1,0 +1,11 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dchessprep release verification</title>
+<h1>Isolated release verification</h1>
+<p>Uses chessdesk-release-qa IndexedDB only. Engine cache checks must run on a disposable QA origin.</p>
+<button id="data">Verify atomic restore</button>
+<button id="engine">Verify engine cache and responsiveness</button>
+<button id="status">Inspect storage and service worker</button>
+<button id="board">Verify upgraded board and measure page</button>
+<button id="lessons">Inspect saved engine evidence and takeaways</button>
+<pre id="output" role="status"></pre>
+<script type="module" src="./release.js"></script>
