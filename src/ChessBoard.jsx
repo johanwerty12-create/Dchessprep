@@ -10,7 +10,7 @@ const squares = Array.from({ length: 64 }, (_, i) => `${FILES[i % 8]}${8 - Math.
 const pieceLabel = (piece) => `${piece.color === 'w' ? 'white' : 'black'} ${PIECE_NAMES[piece.type]}`;
 const pieceUrl = (piece) => `/pieces/chessnut/${piece.color}${piece.type.toUpperCase()}.svg`;
 
-export function ChessBoard({ fen, onMove, interactive = false, orientation: suppliedOrientation, onOrientationChange, lastMove, checked = true, className = '', startFen, historyMoves = EMPTY_MOVES, suggestedMove = '', evaluationBar = null }) {
+export function ChessBoard({ fen, onMove, interactive = false, orientation: suppliedOrientation, onOrientationChange, lastMove, checked = true, className = '', startFen, historyMoves = EMPTY_MOVES, suggestedMove = '', evaluationBar = null, positionRevision, positionAnnouncement = '' }) {
   const [preferences, setPreferences] = useState(readBoardPreferences);
   const [orientation, setOrientation] = useState(() => suppliedOrientation || readBoardPreferences().orientation);
   const [selected, setSelected] = useState('');
@@ -26,12 +26,22 @@ export function ChessBoard({ fen, onMove, interactive = false, orientation: supp
   const boardRef = useRef(null), pointerRef = useRef(null), promotionRef = useRef(null);
   const suppressClick = useRef(0), positionRef = useRef(fen);
   positionRef.current = fen;
+  const positionKey = `${positionRevision ?? ''}\u001f${fen}\u001f${startFen || ''}\u001f${historyMoves.join('\u001e')}`;
+  const positionKeyRef = useRef(positionKey);
+  const pendingMoveAnnouncement = useRef(null);
   const arrowId = `arrow-${useId().replace(/:/g, '')}`;
   useModalFocus(Boolean(promotion), promotionRef, () => setPromotion(null));
   useEffect(() => { if (suppliedOrientation) setOrientation(suppliedOrientation); }, [suppliedOrientation]);
   useEffect(() => {
+    const changed = positionKeyRef.current !== positionKey;
+    positionKeyRef.current = positionKey;
+    if (!changed) return;
     setSelected(''); setPromotion(null); setAnnotations([]); setDrawStart(''); setDrag(null); pointerRef.current = null;
-  }, [fen]);
+    const pending = pendingMoveAnnouncement.current;
+    pendingMoveAnnouncement.current = null;
+    if (pending && pending.fen === fen && (pending.revision == null || pending.revision === positionRevision)) return;
+    setAnnouncement(`Position: ${positionAnnouncement.trim() || 'changed'}`);
+  }, [fen, positionKey, positionAnnouncement, positionRevision]);
   useEffect(() => { setSelected(''); setDrawStart(''); setDrag(null); pointerRef.current = null; }, [orientation]);
   const chess = useMemo(() => {
     try {
@@ -51,6 +61,17 @@ export function ChessBoard({ fen, onMove, interactive = false, orientation: supp
   const legalTargets = new Set(selectedMoves.map((move) => move.to));
   const turn = chess.turn() === 'w' ? 'White' : 'Black';
   const status = terminal.mate ? `${turn} is checkmated` : terminal.stalemate ? 'Draw by stalemate' : terminal.draw ? 'Drawn position' : `${turn} to move${terminal.check ? ', check' : ''}`;
+  const announcePlayedMove = (move) => {
+    let nextFen = '';
+    try {
+      const next = new Chess(chess.fen());
+      next.move({ from: move.from, to: move.to, ...(move.promotion ? { promotion: move.promotion } : {}) });
+      nextFen = next.fen();
+    } catch { /* The parent still owns move validation and the displayed position. */ }
+    pendingMoveAnnouncement.current = { fen: nextFen, revision: Number.isInteger(positionRevision) ? positionRevision + 1 : null };
+    onMove?.({ from: move.from, to: move.to, san: move.san, ...(move.promotion ? { promotion: move.promotion } : {}) });
+    setAnnouncement(`Played ${move.san}`);
+  };
   const savePreference = (patch) => {
     const next = { ...preferences, orientation, ...patch };
     setPreferences(next); saveBoardPreferences(next);
@@ -63,8 +84,8 @@ export function ChessBoard({ fen, onMove, interactive = false, orientation: supp
     if (!possible.length) { setAnnouncement(`No legal move from ${from} to ${to}`); return false; }
     if (possible.some((move) => move.promotion)) { setPromotion({ from, to, fen: expectedFen }); return true; }
     const move = possible[0];
-    onMove?.({ from: move.from, to: move.to, san: move.san });
-    setAnnouncement(`Played ${move.san}`); setSelected(''); return true;
+    announcePlayedMove(move);
+    setSelected(''); return true;
   };
   const activateSquare = (square) => {
     if (promotion) return;
@@ -123,7 +144,7 @@ export function ChessBoard({ fen, onMove, interactive = false, orientation: supp
   const finishPromotion = (type) => {
     if (!promotion || promotion.fen !== positionRef.current || !interactive) { setPromotion(null); return; }
     const move = chess.moves({ square: promotion.from, verbose: true }).find((m) => m.to === promotion.to && m.promotion === type);
-    if (move) { onMove?.({ from: move.from, to: move.to, san: move.san, promotion: type }); setAnnouncement(`Played ${move.san}`); }
+    if (move) announcePlayedMove(move);
     setPromotion(null); setSelected('');
   };
   const displayedMarks = drag?.annotate && drag.to ? [...annotations, { from: drag.from, to: drag.to }] : annotations;
@@ -170,6 +191,6 @@ export function ChessBoard({ fen, onMove, interactive = false, orientation: supp
     </div>
     {drawMode && <div className="annotation-controls"><span>Tap two squares for an arrow; the same square for a circle.</span><div><label>From<select value={arrowFrom} onChange={(e) => setArrowFrom(e.target.value)}>{squares.map((s) => <option key={s}>{s}</option>)}</select></label><label>To<select value={arrowTo} onChange={(e) => setArrowTo(e.target.value)}>{squares.map((s) => <option key={s}>{s}</option>)}</select></label><button type="button" onClick={() => mark(arrowFrom, arrowTo)}>Mark position</button></div></div>}
     <p id={`${arrowId}-instructions`} className="visually-hidden">Arrow keys navigate squares. Enter or Space selects a piece and destination. Escape cancels selection. Use Annotate to draw without moving pieces.</p>
-    <span className="visually-hidden" role="status" aria-live="polite">{announcement}. {status}</span>
+    <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{announcement ? `${announcement}. ` : ''}{status}</span>
   </div>;
 }
