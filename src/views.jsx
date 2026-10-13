@@ -11,6 +11,7 @@ import { cleanText, compareRepertoireLine, evaluationGraphValues, formatScore, g
 const resultLabel = (value) => value === '1-0' ? 'White won' : value === '0-1' ? 'Black won' : value === '1/2-1/2' ? 'Draw' : 'In progress';
 const toneFor = (label) => ({ Best: 'good', 'Best defense': 'good', Inaccuracy: 'warm', Mistake: 'orange', Blunder: 'bad', 'Missed win': 'bad' }[label] || 'neutral');
 const glyphFor = (piece) => ({ k: 'K', q: 'Q', r: 'R', b: 'B', n: 'N', p: '' }[piece] || '');
+const STANDARD_START_FEN = new Chess().fen();
 
 function countKind(records, kind) { return records.filter((record) => record.kind === kind).length; }
 
@@ -382,7 +383,7 @@ export function BoardLabView({ onSaveGame, onAnalyzeBoard, onSaveEnginePosition,
   const [orientation, setOrientation] = useState(() => readBoardPreferences().orientation);
   const [feedback, setFeedback] = useState('');
   const [error, setError] = useState('');
-  const [lines, setLines] = useState([]);
+  const [analysis, setAnalysis] = useState(null);
   const [searching, setSearching] = useState(false);
   const analysisBusy = ['starting', 'downloading', 'analyzing'].includes(analysisState);
   const [multi, setMulti] = useState(2);
@@ -391,14 +392,16 @@ export function BoardLabView({ onSaveGame, onAnalyzeBoard, onSaveEnginePosition,
   const [mobilePanel, setMobilePanel] = useState('moves');
   const fenRef = useRef(fen);
   fenRef.current = fen;
+  const revisionRef = useRef(revision);
+  revisionRef.current = revision;
   if (!treeRef.current) treeRef.current = { id: 'root', san: '', fen: new Chess().fen(), comment: '', nags: [], children: [], parent: null, ply: 0, headers: {} };
   const currentTree = treeRef.current;
   const currentNode = currentTree ? findNode(currentTree, cursor || currentTree.id) : null;
   const activeLine = currentNode ? pathToNode(currentNode).slice(1) : [];
-  void revision;
+  const lines = analysis?.fen === fen && analysis.revision === revision && analysis.depth === limit && analysis.multipv === multi ? analysis.variations : [];
 
   const newTree = (rootFen, rootHeaders = {}) => ({ id: 'root', san: '', fen: rootFen, comment: '', nags: [], children: [], parent: null, ply: 0, headers: rootHeaders });
-  const onNewGame = () => { if (searching) onCancelAnalysis?.(); const root = newTree(new Chess().fen()); treeRef.current = root; setCursor(root.id); setFen(root.fen); setLines([]); setFeedback('New game started.'); setError(''); setFileName('Untitled study'); setRevision((value) => value + 1); };
+  const onNewGame = () => { if (searching) onCancelAnalysis?.(); const root = newTree(STANDARD_START_FEN); treeRef.current = root; setCursor(root.id); setFen(root.fen); setAnalysis(null); setFeedback('New game started.'); setError(''); setFileName('Untitled study'); setRevision((value) => value + 1); };
   const onMove = (move) => {
     if (searching) { onCancelAnalysis?.(); setSearching(false); }
     if (liveChess?.isGameOver()) { setFeedback(boardMessage); return; }
@@ -411,23 +414,23 @@ export function BoardLabView({ onSaveGame, onAnalyzeBoard, onSaveEnginePosition,
       node = { id: makeId('ply'), san: result.san, fen: chess.fen(), from: result.from, to: result.to, color: result.color, comment: '', nags: [], children: [], parent, ply: parent.ply + 1, move: result };
       parent.children.push(node);
     }
-    setCursor(node.id); setFen(node.fen); setError(''); setFeedback(''); setRevision((value) => value + 1);
+    setCursor(node.id); setFen(node.fen); setAnalysis(null); setError(''); setFeedback(''); setRevision((value) => value + 1);
   };
-  const goTo = (node) => { if (!node) return; setCursor(node.id); setFen(node.fen); setFeedback(''); setRevision((value) => value + 1); };
+  const goTo = (node) => { if (!node) return; if (searching) { onCancelAnalysis?.(); setSearching(false); } setCursor(node.id); setFen(node.fen); setAnalysis(null); setFeedback(''); setRevision((value) => value + 1); };
   const undo = () => goTo(currentNode?.parent);
   const redo = () => goTo(currentNode?.children?.[0]);
   const setPosition = (value) => {
     if (searching) { onCancelAnalysis?.(); setSearching(false); }
     try {
       const next = new Chess(value.trim());
-      const root = newTree(next.fen()); treeRef.current = root; setCursor(root.id); setFen(next.fen()); setLines([]); setError(''); setFeedback('FEN loaded as a new study position.'); setRevision((revision) => revision + 1);
+      const root = newTree(next.fen()); treeRef.current = root; setCursor(root.id); setFen(next.fen()); setAnalysis(null); setError(''); setFeedback('FEN loaded as a new study position.'); setRevision((revision) => revision + 1);
     } catch (issue) { setError(`Invalid FEN: ${issue.message}`); }
   };
   const importPgn = () => {
     if (searching) onCancelAnalysis?.();
     try {
       const parsed = parsePgnTree(pgnInput);
-      treeRef.current = boardTreeFromParsed(parsed); setCursor(parsed.root.children[0]?.id || parsed.root.id); setFen(parsed.root.children[0]?.fen || parsed.startFen); setLines([]); setError(''); setFeedback(`${parsed.mainline.length} mainline plies loaded. Variations are available at their branch points.`); setFileName(parsed.headers.Event || parsed.headers.White ? `${parsed.headers.White || 'White'} vs ${parsed.headers.Black || 'Black'}` : 'Imported study'); setRevision((revision) => revision + 1);
+      treeRef.current = boardTreeFromParsed(parsed); setCursor(parsed.root.children[0]?.id || parsed.root.id); setFen(parsed.root.children[0]?.fen || parsed.startFen); setAnalysis(null); setError(''); setFeedback(`${parsed.mainline.length} mainline plies loaded. Variations are available at their branch points.`); setFileName(parsed.headers.Event || parsed.headers.White ? `${parsed.headers.White || 'White'} vs ${parsed.headers.Black || 'Black'}` : 'Imported study'); setRevision((revision) => revision + 1);
     } catch (issue) { setError(issue.message); }
   };
   const exportPgn = () => {
@@ -474,17 +477,22 @@ export function BoardLabView({ onSaveGame, onAnalyzeBoard, onSaveEnginePosition,
     setFeedback('Stockfish variation added to the move tree. Use the board controls to replay it, or save the study.');
   };
   const runAnalysis = async () => {
+    if (liveChess.isGameOver()) { setAnalysis(null); setFeedback(boardMessage); setError(''); return; }
     const targetFen = fen;
-    setSearching(true); setError(''); setFeedback('');
+    const targetRevision = revisionRef.current;
+    const targetDepth = limit, targetMulti = multi;
+    setSearching(true); setAnalysis(null); setError(''); setFeedback('');
     try {
-      const result = await onAnalyzeBoard(targetFen, { depth: limit, multipv: multi });
-      if (fenRef.current !== targetFen) { setError('The position changed while Stockfish was searching. Run analysis again for the current board.'); return; }
-      setLines(result.variations || []);
+      const result = await onAnalyzeBoard(targetFen, { depth: targetDepth, multipv: targetMulti });
+      if (fenRef.current !== targetFen || revisionRef.current !== targetRevision) { setError('The position changed while Stockfish was searching. Run analysis again for the current board.'); return; }
+      const variations = (result.variations || []).filter((line) => line.depth > 0 && line.pv?.length > 0 && line.score && variationPositions(targetFen, line.pv).length > 1);
+      if (!variations.length) throw new Error('Stockfish returned no legal continuation for this position. Check the position and try again.');
+      setAnalysis({ fen: targetFen, revision: targetRevision, depth: targetDepth, multipv: targetMulti, variations });
     } catch (issue) { setError(issue.message); }
     finally { setSearching(false); }
   };
   const saveLinePosition = async (line) => {
-    if (!line?.pv?.[0]) return;
+    if (!line?.pv?.[0] || !lines.includes(line)) return;
     const chess = new Chess(fen);
     const move = chess.moves({ verbose: true }).find((item) => variationUci(item) === line.pv[0]);
     if (!move) return;
@@ -495,21 +503,35 @@ export function BoardLabView({ onSaveGame, onAnalyzeBoard, onSaveEnginePosition,
   const liveChess = useMemo(() => chessAtNode(currentTree, currentNode), [fen, revision]);
   const sideToMove = liveChess.turn() === 'w' ? 'White' : 'Black';
   const boardMessage = liveChess.isCheckmate() ? `${sideToMove} is checkmated.` : liveChess.isStalemate() ? 'Draw by stalemate.' : liveChess.isThreefoldRepetition() ? 'Threefold repetition — a draw can be claimed.' : liveChess.isDrawByFiftyMoves() ? 'Fifty-move rule — a draw can be claimed.' : liveChess.isInsufficientMaterial() ? 'Draw by insufficient material.' : liveChess.isCheck() ? `${sideToMove} to move · check` : `${sideToMove} to move`;
+  const terminalPosition = liveChess.isGameOver();
+  const positionLabel = activeLine.length ? `Ply ${activeLine.length}` : currentTree.fen === STANDARD_START_FEN ? 'Starting position' : 'Loaded position';
+  const boardBadge = liveChess.isCheckmate() ? 'Checkmate' : liveChess.isStalemate() ? 'Stalemate' : terminalPosition ? 'Draw' : liveChess.isCheck() ? 'Check' : 'Ready';
   return <>
     <SectionTitle eyebrow="ANALYSIS BOARD" title="Explore a position." description="Play moves, explore alternatives, and ask Stockfish." action={<div className="review-title-actions"><Button icon="rotate" onClick={onNewGame}>New board</Button><Button icon="download" onClick={exportPgn}>Export PGN</Button></div>} />
     {analysisState === 'downloading' && <div className="analysis-progress board-download-progress"><div className="progress-copy"><span>Downloading Stockfish 18</span><strong>{engineDownload?.percent ?? 0}%</strong></div><div className="progress-track"><span style={{ width: `${engineDownload?.percent ?? 0}%` }}/></div><small>7.3 MB lite WASM · cached on this device for offline analysis</small></div>}{searching && analysisState === 'analyzing' && <div className="analysis-progress board-download-progress"><div className="progress-copy"><span>Local engine search</span><strong>{currentInfo?.depth ? `Depth ${currentInfo.depth}` : 'Running'}</strong></div><div className="progress-track"><span className="progress-indeterminate"/></div><small>{currentInfo?.nodes ? `${currentInfo.nodes.toLocaleString()} nodes` : 'Searching in a Web Worker'}</small></div>}
-    <div className="board-status board-lab-status"><span className={`turn-dot${liveChess.isCheckmate() || liveChess.isDraw() ? ' draw-dot' : ''}`}/>{boardMessage}<span className="board-status-ply">{activeLine.length ? `Ply ${activeLine.length}` : 'Starting position'}</span></div>
+    <div className="board-status board-lab-status"><span className={`turn-dot${terminalPosition ? ' draw-dot' : ''}`}/>{boardMessage}<span className="board-status-ply">{positionLabel}</span></div>
     {error && <div className="inline-error"><Icon name="spark"/>{error}<button onClick={() => setError('')} aria-label="Dismiss error"><Icon name="close" size={14}/></button></div>}
     <div className="board-lab-layout" data-mobile-panel={mobilePanel}>
       <section className="panel board-lab-board">
         <div className="player-row"><span className={`player-avatar player-${orientation === 'w' ? 'black' : 'white'}`}>{orientation === 'w' ? '♚' : '♔'}</span><div><strong>{orientation === 'w' ? 'Black pieces' : 'White pieces'}</strong><small>Study position</small></div></div>
         <ChessBoard fen={fen} startFen={currentTree.fen} historyMoves={activeLine.map((node) => node.san)} interactive={!liveChess.isGameOver()} onMove={onMove} orientation={orientation} onOrientationChange={setOrientation} lastMove={currentNode?.move ? { from: currentNode.move.from, to: currentNode.move.to } : null}/>
-        <div className="player-row player-row-bottom"><span className={`player-avatar player-${orientation === 'w' ? 'white' : 'black'}`}>{orientation === 'w' ? '♔' : '♚'}</span><div><strong>{orientation === 'w' ? 'White pieces' : 'Black pieces'}</strong><small>Legal moves · promotion · castling · en passant</small></div><Pill>{liveChess.isCheck() ? 'Check' : liveChess.isGameOver() ? 'Game over' : 'Ready'}</Pill></div>
+        <div className="player-row player-row-bottom"><span className={`player-avatar player-${orientation === 'w' ? 'white' : 'black'}`}>{orientation === 'w' ? '♔' : '♚'}</span><div><strong>{orientation === 'w' ? 'White pieces' : 'Black pieces'}</strong><small>{liveChess.moves().length ? 'Legal moves · promotion · castling · en passant' : 'No legal moves'}</small></div><Pill>{boardBadge}</Pill></div>
         <div className="board-controls"><IconTextButton label="Undo" icon="back" onClick={undo} disabled={!currentNode?.parent}/><IconTextButton label="Previous move" icon="chevron" onClick={() => goTo(currentNode?.parent)} disabled={!currentNode?.parent}/><span className="ply-counter">{activeLine.length} plies · {currentMoves.length} continuation{currentMoves.length === 1 ? '' : 's'}</span><IconTextButton label="Continue main line" icon="forward" onClick={redo} disabled={!currentMoves.length || liveChess.isGameOver()}/></div>
         <div className="mobile-board-panels" role="group" aria-label="Study panels">{[["moves", "Moves"], ["engine", "Engine"], ["tools", "FEN / PGN"]].map(([key, label]) => <button key={key} type="button" aria-pressed={mobilePanel === key} onClick={() => setMobilePanel(key)}>{label}</button>)}</div>
         <div className="lab-move-tree"><div className="lab-tree-heading"><strong>Move tree</strong><small>{fileName}</small></div>{activeLine.length ? <div className="lab-ply-list"><button className="lab-ply-root" onClick={() => goTo(currentTree)}>Start</button>{activeLine.map((node, index) => <button key={node.id} className={`lab-ply${node.id === cursor ? ' selected' : ''}`} onClick={() => goTo(node)}><small>{Math.floor(index / 2) + 1}{index % 2 ? '…' : '.'}</small>{node.san}{node.children.length > 1 && <span className="branch-count">+{node.children.length - 1}</span>}</button>)}</div> : <p className="small-empty">Tap a piece, then its destination. Or drag to move.</p>}{currentMoves.length > 1 && <div className="variation-branches"><span>Continue from here</span>{currentMoves.map((node, index) => <button key={node.id} className={node.id === cursor ? 'selected' : ''} onClick={() => goTo(node)}><small>{index === 0 ? 'Main' : `Var ${index}`}</small>{node.san}</button>)}</div>}</div>
       </section>
-      <aside className="board-lab-side"><section className="panel lab-engine-panel"><div className="panel-heading"><div><p className="eyebrow">POSITION ANALYSIS</p><h2>Ask Stockfish 18</h2></div><span className={`engine-status-dot engine-${engineStatus}`}/></div><div className="engine-option-row"><label>Depth<select disabled={analysisBusy} value={limit} onChange={(event) => setLimit(Number(event.target.value))}><option value="10">10 · quick</option><option value="12">12 · standard</option><option value="16">16 · thorough</option></select></label><label>Lines<select disabled={analysisBusy} value={multi} onChange={(event) => setMulti(Number(event.target.value))}><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label></div><Button variant="primary" icon={searching ? 'stop' : 'play'} onClick={runAnalysis} disabled={searching || analysisBusy}>{searching ? 'Searching…' : analysisBusy ? 'Engine busy' : 'Analyze position'}</Button>{searching && <Button variant="ghost" onClick={() => { onCancelAnalysis?.(); setSearching(false); }}>Cancel search</Button>}{lines.length > 0 ? <div className="engine-lines">{lines.map((line) => { const chess = new Chess(fen); const move = chess.moves({ verbose: true }).find((item) => variationUci(item) === line.pv[0]); return <div className="engine-line" key={line.multipv}><div className="engine-line-top"><Pill tone={line.multipv === 1 ? 'good' : 'neutral'}>{formatScore(line.score)}</Pill><strong>{move?.san || line.pv[0]}</strong><small>d{line.depth}</small><IconButton label="Add this line to training" icon="training" onClick={() => saveLinePosition(line)}/></div><p>{line.san || line.pv?.slice(0, 8).join(' ') || 'Variation not yet available'}</p><button className="text-link engine-replay" onClick={() => replayEngineLine(line)}>Replay in move tree</button></div>; })}</div> : <p className="engine-hint">Analyze this position on your device. First use downloads 7.3 MB; then analysis works offline.</p>}<p className="engine-footnote"><Icon name="shield" size={13}/>{engineName || 'Stockfish 18 lite'} · 1 worker · 32 MB hash</p></section>
+      <aside className="board-lab-side">
+        <section className="panel lab-engine-panel">
+          <div className="panel-heading"><div><p className="eyebrow">POSITION ANALYSIS</p><h2>Ask Stockfish 18</h2></div><span className={`engine-status-dot engine-${engineStatus}`}/></div>
+          <div className="engine-option-row">
+            <label>Depth<select disabled={analysisBusy || terminalPosition} value={limit} onChange={(event) => setLimit(Number(event.target.value))}><option value="10">10 · quick</option><option value="12">12 · standard</option><option value="16">16 · thorough</option></select></label>
+            <label>Lines<select disabled={analysisBusy || terminalPosition} value={multi} onChange={(event) => setMulti(Number(event.target.value))}><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
+          </div>
+          <Button variant="primary" icon={searching ? 'stop' : 'play'} onClick={runAnalysis} disabled={searching || analysisBusy || terminalPosition}>{terminalPosition ? 'Position over' : searching ? 'Searching…' : analysisBusy ? 'Engine busy' : 'Analyze position'}</Button>
+          {searching && <Button variant="ghost" onClick={() => { onCancelAnalysis?.(); setSearching(false); }}>Cancel search</Button>}
+          {terminalPosition ? <div className="engine-terminal" role="status"><strong>{boardMessage}</strong><span>No engine score is shown for a finished position.</span></div> : lines.length > 0 ? <div className="engine-lines">{lines.map((line) => { const chess = new Chess(fen); const move = chess.moves({ verbose: true }).find((item) => variationUci(item) === line.pv[0]); return <div className="engine-line" key={line.multipv}><div className="engine-line-top"><Pill tone={line.multipv === 1 ? 'good' : 'neutral'}>{formatScore(line.score)}</Pill><strong>{move?.san || line.pv[0]}</strong><small>d{line.depth}</small><IconButton label="Add this line to training" icon="training" onClick={() => saveLinePosition(line)}/></div><p>{line.san}</p><button className="text-link engine-replay" onClick={() => replayEngineLine(line)}>Replay in move tree</button></div>; })}</div> : <p className="engine-hint">Analyze this position on your device. First use downloads 7.3 MB; then analysis works offline.</p>}
+          <p className="engine-footnote"><Icon name="shield" size={13}/>{engineName || 'Stockfish 18 lite'} · 1 worker · 32 MB hash</p>
+        </section>
         <section className="panel position-tools"><div className="mobile-file-actions"><Button icon="rotate" onClick={onNewGame}>New board</Button><Button icon="download" onClick={exportPgn}>Export PGN</Button></div><div className="panel-heading"><div><p className="eyebrow">POSITION TOOLS</p><h2>FEN &amp; PGN</h2></div></div><label>Current FEN<div className="input-with-button"><input value={fen} readOnly aria-label="Current FEN"/><Button onClick={copyFen}>Copy</Button></div></label><form onSubmit={(event) => { event.preventDefault(); setPosition(fenInput); setFenInput(''); }}><label>Load FEN<div className="input-with-button"><input value={fenInput} onChange={(event) => setFenInput(event.target.value)} placeholder="Paste a legal FEN…"/><Button type="submit">Load</Button></div></label></form><label>Import PGN with variations<textarea value={pgnInput} onChange={(event) => setPgnInput(event.target.value)} rows={4} placeholder="Paste a game or study with (variations)"/></label><Button icon="upload" onClick={importPgn} disabled={!pgnInput.trim()}>Load PGN study</Button><Button icon="save" onClick={saveStudy} disabled={!treeRef.current?.children?.length}>Save line to library</Button></section></aside></div>
     {feedback && <div className="inline-success" role="status"><Icon name="check"/>{feedback}<button onClick={() => setFeedback('')} aria-label="Dismiss message"><Icon name="close" size={14}/></button></div>}
     <p className="ethics-note"><Icon name="shield" size={14}/> Use analysis for study and completed games; never use engine assistance during active competitive play.</p>

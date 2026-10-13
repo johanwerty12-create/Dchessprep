@@ -1,10 +1,33 @@
-import { listRecords, putRecords, replaceAllRecords } from './db.js';
-import { StockfishEngine, cacheEngineAsset, ENGINE_JS, ENGINE_WASM } from './engine.js';
-import { makeBackup, validateBackup, variationPositions } from './domain.js';
+import { StockfishEngine, cacheEngineAsset, ENGINE_JS, ENGINE_WASM } from '../../src/engine.js';
+import { makeBackup, validateBackup, variationPositions } from '../../src/domain.js';
 const output = document.querySelector('#output');
 const log = (text) => { output.textContent += `${text}\n`; };
 const check = (condition, message) => { if (!condition) throw new Error(message); log(`PASS ${message}`); };
 const run = (fn) => async () => { output.textContent = ''; try { await fn(); } catch (error) { log(`FAIL ${error.name}: ${error.message}`); } };
+const QA_DB_NAME = 'chessdesk-release-qa';
+const qaRequest = (request) => new Promise((resolve, reject) => { request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+const qaTransactionDone = (transaction) => new Promise((resolve, reject) => { transaction.oncomplete = resolve; transaction.onabort = transaction.onerror = () => reject(transaction.error || new Error('QA storage operation failed')); });
+async function qaDatabase() {
+  const request = indexedDB.open(QA_DB_NAME, 1);
+  request.onupgradeneeded = () => { if (!request.result.objectStoreNames.contains('records')) request.result.createObjectStore('records', { keyPath: 'id' }); };
+  const db = await qaRequest(request);
+  if (!db.objectStoreNames.contains('records')) { db.close(); throw new Error('Release QA database has no records store; reload this harness and retry.'); }
+  return db;
+}
+async function listRecords() {
+  const db = await qaDatabase(), tx = db.transaction('records', 'readonly'), done = qaTransactionDone(tx);
+  const records = await qaRequest(tx.objectStore('records').getAll()); await done; db.close(); return records;
+}
+async function replaceAllRecords(records) {
+  const db = await qaDatabase(), tx = db.transaction('records', 'readwrite'), done = qaTransactionDone(tx), store = tx.objectStore('records');
+  try { store.clear(); for (const record of records) store.put(record); } catch (error) { tx.abort(); await done.catch(() => {}); db.close(); throw error; }
+  try { await done; } finally { db.close(); }
+}
+async function putRecords(records) {
+  const db = await qaDatabase(), tx = db.transaction('records', 'readwrite'), done = qaTransactionDone(tx), store = tx.objectStore('records');
+  try { for (const record of records) store.put(record); } catch (error) { tx.abort(); await done.catch(() => {}); db.close(); throw error; }
+  try { await done; } finally { db.close(); }
+}
 const original = [{ id: 'qa-original', kind: 'opponent', name: 'Atomic restore sentinel', updatedAt: '2026-01-01' }];
 document.querySelector('#data').onclick = run(async () => {
   await replaceAllRecords(original);
@@ -76,7 +99,7 @@ document.querySelector('#board').onclick = run(async () => {
   document.body.append(frame);
   await new Promise((resolve) => frame.onload = resolve);
   const win = frame.contentWindow, doc = win.document;
-  const wait = async (condition) => { const start = performance.now(); while (!condition()) { if (performance.now() - start > 10000) throw new Error('App did not render'); await new Promise((r) => setTimeout(r, 20)); } };
+  const wait = async (condition, timeoutMs = 10000) => { const start = performance.now(); while (!condition()) { if (performance.now() - start > timeoutMs) throw new Error('Timed out waiting for the browser state'); await new Promise((r) => setTimeout(r, 20)); } };
   await wait(() => doc.querySelector('button[aria-label="Board"]'));
   const initial = win.performance.getEntriesByType('resource').map((r) => ({ name: new URL(r.name).pathname, transfer: r.transferSize, decoded: r.decodedBodySize }));
   log(`Initial app resource bytes ${JSON.stringify(initial)} (Cache Storage may make transfer zero)`);
@@ -113,6 +136,15 @@ document.querySelector('#board').onclick = run(async () => {
     check(Boolean(button), `${label} is reachable on mobile`);
     button.click();
   };
+  const loadFen = async (value) => {
+    clickVisible('FEN / PGN'); await nextPaint();
+    const input = doc.querySelector('.position-tools form input');
+    Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set.call(input, value);
+    input.dispatchEvent(new win.Event('input', { bubbles: true }));
+    input.dispatchEvent(new win.Event('change', { bubbles: true }));
+    clickVisible('Load'); await nextPaint();
+    clickVisible('Moves'); await nextPaint();
+  };
   clickVisible('Engine'); await nextPaint();
   check(doc.querySelector('.lab-engine-panel').getClientRects().length > 0 && !doc.querySelector('.position-tools').getClientRects().length, 'Engine selector shows only engine tools');
   clickVisible('FEN / PGN'); await nextPaint();
@@ -140,6 +172,21 @@ document.querySelector('#board').onclick = run(async () => {
   geometry();
   check(doc.documentElement.scrollWidth === doc.documentElement.clientWidth, '320px phone has no horizontal overflow');
   check(doc.querySelector('.board-controls').getBoundingClientRect().bottom <= doc.querySelector('.mobile-nav').getBoundingClientRect().top, '320 by 568 phone shows board controls above navigation even after feedback');
+  clickVisible('Engine'); await nextPaint();
+  clickVisible('Analyze position');
+  await wait(() => Boolean(doc.querySelector('.engine-lines .engine-line-top small')), 120000);
+  check(Number(doc.querySelector('.engine-line-top small').textContent.replace(/^d/, '')) > 0, 'analysis board displays a scored Stockfish search with a real depth');
+  doc.querySelector('[data-square="e7"]').click(); await nextPaint();
+  doc.querySelector('[data-square="e5"]').click(); await nextPaint();
+  check(fen().includes('/4p3/4P3/') && !doc.querySelector('.engine-lines'), 'changing the board clears Stockfish lines tied to the previous position');
+  await loadFen('r1bqkb1r/pppp1Qpp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4');
+  check(doc.querySelector('.board-lab-status').textContent.includes('Black is checkmated') && doc.querySelector('.board-status-ply').textContent === 'Loaded position', 'loaded Scholar’s Mate FEN shows checkmate and position context');
+  check(doc.querySelector('.player-row-bottom .pill').textContent.trim() === 'Checkmate' && doc.querySelector('.player-row-bottom small').textContent === 'No legal moves', 'checkmate footer does not reduce mate to a generic check state');
+  clickVisible('Engine'); await nextPaint();
+  check(doc.querySelector('.lab-engine-panel button.button-primary').disabled && doc.querySelector('.lab-engine-panel button.button-primary').textContent.includes('Position over'), 'terminal position cannot start an engine search');
+  check(doc.querySelector('.engine-terminal').textContent.includes('Black is checkmated') && !/\bM0\b|\bd0\b/.test(doc.querySelector('.lab-engine-panel').textContent), 'terminal panel shows the chess result without M0 or d0');
+  await loadFen('7k/5Q2/6K1/8/8/8/8/8 b - - 0 1');
+  check(doc.querySelector('.board-lab-status').textContent.includes('Draw by stalemate') && doc.querySelector('.player-row-bottom .pill').textContent.trim() === 'Stalemate', 'stalemate is labeled as a draw in both board contexts');
 });
 
 document.querySelector('#lessons').onclick = run(async () => {

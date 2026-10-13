@@ -86,6 +86,7 @@ test('UCI scores retain their side-to-move perspective and convert once to mover
   assert.equal(scoreAsCp({ kind: 'mate', value: 4 }), null, 'mate is not coerced into fabricated centipawns');
   assert.equal(formatScore({ kind: 'mate', value: 3, perspective: 'w' }), '+M3');
   assert.equal(formatScore({ kind: 'mate', value: -3, perspective: 'b' }), '−M3');
+  assert.equal(formatScore(terminalMate.score), '—', 'mate zero is not presented as a numeric engine evaluation');
 });
 
 test('Scholar’s Mate checkmate is a terminal White win, not a missed win or negative graph score', () => {

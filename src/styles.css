@@ -348,10 +348,12 @@ option { color: var(--text); background: var(--surface); }
 .progress-track span { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width .25s ease; }
 .progress-track .progress-indeterminate { width: 35%; background: linear-gradient(90deg, transparent, var(--accent), transparent); animation: progress-slide 1.25s ease-in-out infinite; }
 @keyframes progress-slide { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
-.analysis-progress small, .engine-hint { display: block; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.analysis-progress small, .engine-hint { display: block; color: var(--text-soft); font-size: 11px; line-height: 1.55; }
 .engine-hint { margin: 10px 0 0; }
-.engine-footnote { display: flex; align-items: center; gap: 5px; margin: 12px 0 0; padding-top: 9px; color: var(--muted); border-top: 1px solid var(--line); font-size: 9px; }
+.engine-footnote { display: flex; align-items: center; gap: 5px; margin: 12px 0 0; padding-top: 9px; color: var(--text-soft); border-top: 1px solid var(--line); font-size: 10px; }
 .engine-footnote svg { color: var(--green); }
+.engine-terminal { display: grid; gap: 5px; margin-top: 12px; padding: 10px; color: var(--text-soft); background: var(--surface-muted); border: 1px solid var(--line-strong); border-radius: 8px; font-size: 12px; line-height: 1.5; }
+.engine-terminal span { color: var(--text-soft); }
 .review-engine-lines { margin-top: 10px; padding: 9px; background: var(--surface-muted); border: 1px solid var(--line); border-radius: 8px; }
 .review-engine-lines > .eyebrow { margin-bottom: 7px; font-size: 8px; }
 .review-engine-lines > div { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-top: 1px solid var(--line); }
@@ -664,8 +666,8 @@ option { color: var(--text); background: var(--surface); }
 .engine-line { padding: 9px 0; border-bottom: 1px solid var(--line); }
 .engine-line-top { display: flex; align-items: center; gap: 7px; }
 .engine-line-top > strong { flex: 1; color: var(--text-soft); font-size: 10px; }
-.engine-line-top > small { color: var(--muted); font-size: 8px; }
-.engine-line > p { margin: 6px 0 0; color: var(--muted); font-family: Consolas,monospace; font-size: 8px; line-height: 1.5; }
+.engine-line-top > small { color: var(--text-soft); font-size: 10px; }
+.engine-line > p { margin: 6px 0 0; color: var(--text-soft); font-family: Consolas,monospace; font-size: 11px; line-height: 1.55; }
 .position-tools .panel-heading { margin-bottom: 10px; }
 .position-tools > label, .position-tools form > label { margin-top: 9px; }
 .position-tools > .button { width: 100%; margin-top: 7px; }

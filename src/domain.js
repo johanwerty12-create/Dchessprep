@@ -364,7 +364,9 @@ export function acceptableReviewMoves(entry) {
 export function formatScore(score) {
   if (!score) return '—';
   if (score.kind === 'terminal') return score.result === 'draw' ? `Draw · ${score.termination}` : `${score.result === 'win' ? 'Win' : 'Loss'} · ${score.termination}`;
-  if (score.kind === 'mate') return score.value > 0 ? `+M${score.value}` : score.value < 0 ? `−M${Math.abs(score.value)}` : 'M0';
+  // UCI mate 0 means the root position is already checkmate, not a useful
+  // distance estimate. The board rules provide the actual terminal result.
+  if (score.kind === 'mate') return score.value > 0 ? `+M${score.value}` : score.value < 0 ? `−M${Math.abs(score.value)}` : '—';
   const pawns = score.value / 100;
   return `${pawns > 0 ? '+' : ''}${pawns.toFixed(1)}`;
 }

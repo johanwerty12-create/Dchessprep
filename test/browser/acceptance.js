@@ -1,5 +1,5 @@
-import { listRecords } from './app-db.js';
-import { duePracticeCards } from './practice.js';
+import { listRecords } from '../../src/db.js';
+import { duePracticeCards } from '../../src/practice.js';
 const output = document.querySelector('#output');
 const log = (s) => output.textContent += s + '\n';
 const check = (ok, s) => { if (!ok) throw new Error(s); log('PASS ' + s); };
