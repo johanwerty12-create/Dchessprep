@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { duePracticeCards, practiceSummary, recordPracticeAttempt, validatePracticeLog } from '../src/practice.js';
+import { duePracticeCards, practiceSummary, recordPracticeAttempt, scheduledPracticeCards, validatePracticeLog } from '../src/practice.js';
 import { makeBackup, validateBackup } from '../src/domain.js';
 
 const now = Date.parse('2026-10-12T10:00:00Z');
@@ -11,6 +11,18 @@ test('short practice takes the five oldest due cards without including future or
   cards.push({ ...base, id: 'future', dueAt: new Date(now + 1).toISOString() }, { ...base, id: 'invalid', dueAt: 'bad' });
   assert.deepEqual(duePracticeCards(cards, now, 5).map((c) => c.id), ['7', '6', '5', '4', '3']);
   assert.equal(cards.length, 10);
+});
+
+test('saved schedule shows due cards first, upcoming by date, and paused positions last', () => {
+  const now = Date.parse('2026-10-13T00:00:00.000Z');
+  const cards = [
+    { id: 'paused', kind: 'training', dueAt: '2026-10-01T00:00:00.000Z', retiredAt: '2026-10-02T00:00:00.000Z' },
+    { id: 'late', kind: 'training', dueAt: '2026-10-12T00:00:00.000Z' },
+    { id: 'future-late', kind: 'training', dueAt: '2026-10-20T00:00:00.000Z' },
+    { id: 'future-soon', kind: 'training', dueAt: '2026-10-14T00:00:00.000Z' },
+    { id: 'unrelated', kind: 'game', dueAt: '2026-10-01T00:00:00.000Z' },
+  ];
+  assert.deepEqual(scheduledPracticeCards(cards, now).map((card) => card.id), ['late', 'future-soon', 'future-late', 'paused']);
 });
 
 test('unaided recall advances spacing, while hint, miss and reveal return in ten minutes', () => {

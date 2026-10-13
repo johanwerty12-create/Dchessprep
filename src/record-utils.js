@@ -2,12 +2,24 @@ import { Chess } from 'chess.js';
 import { variationUci } from './domain.js';
 
 export function isDuplicateImportedGame(existing, incoming) {
+  // The saved name is a display label (and multi-game imports add a sequence
+  // suffix). It must not turn the same PGN plus import metadata into a new game.
   return existing?.kind === 'game'
     && incoming?.kind === 'game'
     && existing.pgn === incoming.pgn
-    && existing.name === incoming.name
     && (existing.opponent || '') === (incoming.opponent || '')
     && (existing.color || '') === (incoming.color || '');
+}
+
+export function deduplicateImportedGames(existing = [], incoming = []) {
+  const seen = existing.filter((record) => record?.kind === 'game');
+  const unique = [];
+  const duplicates = [];
+  for (const game of incoming) {
+    if (seen.some((saved) => isDuplicateImportedGame(saved, game))) duplicates.push(game);
+    else { unique.push(game); seen.push(game); }
+  }
+  return { unique, duplicates };
 }
 
 export function linkedRecordsForGame(records, gameId) {

@@ -8,6 +8,17 @@ export function duePracticeCards(records, now = Date.now(), limit = Infinity) {
     .slice(0, limit);
 }
 
+export function scheduledPracticeCards(records, now = Date.now()) {
+  const dueTime = (card) => {
+    const value = Date.parse(card.dueAt || card.createdAt);
+    return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY;
+  };
+  const rank = (card) => card.retiredAt ? 2 : dueTime(card) <= now ? 0 : 1;
+  return records.filter((card) => card.kind === 'training')
+    .slice()
+    .sort((a, b) => rank(a) - rank(b) || dueTime(a) - dueTime(b) || a.id.localeCompare(b.id));
+}
+
 export function practiceSummary(records, now = Date.now()) {
   const attempts = records.filter((r) => r.kind === 'training').flatMap((r) => r.practiceLog || [])
     .filter((a) => Date.parse(a.at) <= now && Date.parse(a.at) >= now - 7 * 86400000);

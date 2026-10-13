@@ -12,6 +12,8 @@
     "verify:engine": "node scripts/verify-engine.mjs",
     "check:pages": "node scripts/check-pages-build.mjs",
     "check:assets": "node scripts/check-piece-assets.mjs",
+    "check:budget": "node scripts/check-performance-budget.mjs",
+    "check:release": "node scripts/check-release.mjs",
     "icons:generate": "node scripts/generate-pwa-icons.mjs"
   },
   "dependencies": {

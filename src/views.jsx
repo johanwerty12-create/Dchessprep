@@ -1,12 +1,13 @@
-import { formatStudyDate as shortDate } from './dates.js';
+import { formatStudyDate as shortDate, localDayKey } from './dates.js';
 import { opponentColor, summarizeOpponentGames } from './prep.js';
-import { duePracticeCards, practiceSummary } from './practice.js';
+import { duePracticeCards, practiceSummary, scheduledPracticeCards } from './practice.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Chess } from 'chess.js';
 import { ChessBoard } from './ChessBoard.jsx';
 import { readBoardPreferences } from './board-logic.js';
 import { Button, EmptyState, Icon, Pill, SectionTitle } from './components.jsx';
 import { cleanText, compareRepertoireLine, evaluationGraphValues, formatScore, gameFromPgn, makeId, materialPhase, parsePgn, parsePgnTree, serializePgnTree, studyMainlineResult, variationPositions, variationUci } from './domain.js';
+import { evaluationBarModel } from './analysis-ui.js';
 
 const resultLabel = (value) => value === '1-0' ? 'White won' : value === '0-1' ? 'Black won' : value === '1/2-1/2' ? 'Draw' : 'In progress';
 const toneFor = (label) => ({ Best: 'good', 'Best defense': 'good', Inaccuracy: 'warm', Mistake: 'orange', Blunder: 'bad', 'Missed win': 'bad' }[label] || 'neutral');
@@ -259,6 +260,7 @@ export function ClashView({ initialLineId, records, onAddLine, onDeleteLine, onN
 export function TrainingView({ initialCardId, records, onAddReviewCards, onAddLineCards, onGradeCard, onSaveEnginePosition, onNavigate }) {
   const cards = records.filter((record) => record.kind === 'training');
   const dueCards = duePracticeCards(cards);
+  const scheduleCards = scheduledPracticeCards(cards);
   const recall = practiceSummary(cards);
   const reviews = records.filter((record) => record.kind === 'review' && record.moves?.length);
   const games = records.filter((record) => record.kind === 'game');
@@ -356,16 +358,14 @@ export function TrainingView({ initialCardId, records, onAddReviewCards, onAddLi
     setSavedCritical(`${count} position${count === 1 ? '' : 's'} added from ${line.name}.`);
     setShowAddSources(false);
   };
-  const enginePositions = records.filter((record) => record.kind === 'board-position' && record.targetUci);
   return <>
     <SectionTitle eyebrow="TRAINING STUDIO" title="Turn good study into recall." description="Rehearse actual positions with a spaced schedule that adapts when a move is missed." action={<Button icon="plus" onClick={() => setShowAddSources((value) => !value)}>{showAddSources ? 'Close sources' : 'Add positions'}</Button>} />
     {!started && recall.total > 0 && <PracticeProgress summary={recall}/>}
-    <div className="training-metrics"><div><small>Cards in library</small><strong>{cards.length}</strong></div><div><small>Due now</small><strong>{dueCards.length}</strong></div><div><small>Reviewed today</small><strong>{cards.filter((item) => item.lastReviewedAt?.slice(0, 10) === new Date().toISOString().slice(0, 10)).length}</strong></div><div><small>Engine positions</small><strong>{cards.filter((item) => item.sourceType === 'engine-position').length}</strong></div></div>
+    <div className="training-metrics"><div><small>Cards in library</small><strong>{cards.length}</strong></div><div><small>Due now</small><strong>{dueCards.length}</strong></div><div><small>Reviewed today</small><strong>{cards.filter((item) => item.lastReviewedAt && localDayKey(item.lastReviewedAt) === localDayKey(new Date())).length}</strong></div><div><small>Engine positions</small><strong>{cards.filter((item) => item.sourceType === 'engine-position').length}</strong></div></div>
     {sourceError && <p className="inline-error" role="alert">{sourceError}</p>}
     {savedCritical && <div className="inline-success"><Icon name="check"/>{savedCritical}<button onClick={() => setSavedCritical('')} aria-label="Dismiss"><Icon name="close" size={14}/></button></div>}
     {showAddSources && <section className="panel add-source-panel"><div className="panel-heading"><div><p className="eyebrow">BUILD A REAL REVIEW QUEUE</p><h2>Choose what to rehearse</h2></div></div><div className="training-source-grid">{reviews.filter((item) => item.engineName?.includes('Stockfish 18')).map((review) => { const game = games.find((item) => item.id === review.gameId); const critical = review.moves.filter((move) => ['Inaccuracy','Mistake','Blunder','Missed win'].includes(move.label)); return <div className="training-source-card" key={review.id}><span className="small-icon"><Icon name="review"/></span><div><strong>{game?.name || 'Saved engine review'}</strong><small>{critical.length} engine-confirmed critical positions</small></div><Button onClick={() => addReview(review)} disabled={!critical.length}>Add critical</Button></div>; })}{lines.map((line) => <div className="training-source-card" key={line.id}><span className="small-icon"><Icon name="book"/></span><div><strong>{line.name}</strong><small>{line.moves.length} prepared positions · {line.color === 'w' ? 'White' : 'Black'}</small></div><Button onClick={() => addLine(line)}>Add line</Button></div>)}{!reviews.some((item) => item.engineName?.includes('Stockfish 18')) && !lines.length && <p className="source-empty">Save Stockfish 18 reviews or prepared lines first. No sample positions are preloaded.</p>}</div></section>}
-    {started && card ? <section className="training-session-grid" ref={sessionRef}><section className="panel training-board-panel"><div className="training-session-top"><div><p className="eyebrow">REVIEW {Math.min(progress + 1, sessionIds.length)} OF {sessionIds.length}</p><h2>{card.sourceName || card.name || 'Study position'}</h2></div><Pill tone={card.sourceType === 'critical' ? 'warm' : card.sourceType === 'engine-position' ? 'good' : 'neutral'}>{card.sourceType === 'critical' ? 'Engine critical moment' : card.sourceType === 'engine-position' ? 'Saved engine position' : 'Prepared line'}</Pill></div><ChessBoard fen={fen || card.fen} interactive={!graded && !savingAttempt && !pendingAttempt} onMove={onTryMove} orientation={card.color || 'w'}/><div className="training-board-foot"><span><Icon name="clock" size={14}/> {card.sourceType === 'critical' ? `Move ${Math.ceil(card.ply / 2)} · ${card.label}` : card.sourceType === 'engine-position' ? 'Analysis board position' : `Move ${Math.ceil(card.ply / 2)} · ${card.sourceName || 'repertoire'}`}</span><span>{graded ? 'Result saved' : `${card.color === 'w' ? 'White' : 'Black'} to move`}</span></div></section><aside className="panel training-feedback-panel"><p className="eyebrow">RECALL FIRST</p><h2>{graded ? 'Position reviewed' : card.sourceType === 'repertoire' ? 'Find the prepared move.' : 'Find a strong engine line.'}</h2><p className="training-prompt">Tap a piece, then its destination.</p>{feedback && <div className={`training-feedback feedback-${feedback.tone}`} role="status"><Icon name={feedback.tone === 'good' ? 'check' : 'spark'} size={17}/><span>{feedback.text}</span></div>}{graded && savedTakeaway && <div className="training-takeaway"><p className="eyebrow">YOUR SAVED TAKEAWAY</p><p>{savedTakeaway}</p></div>}{pendingAttempt && !savingAttempt && <Button variant="primary" onClick={() => saveAttempt(pendingAttempt)}>Retry saving attempt</Button>}{!graded && !pendingAttempt && <Button variant="secondary" onClick={() => { setAssisted(true); setFeedback({ tone: 'warm', text: `Hint: ${card.targetSan?.[0] === 'N' ? 'a knight' : card.targetSan?.[0] === 'B' ? 'a bishop' : card.targetSan?.[0] === 'R' ? 'a rook' : card.targetSan?.[0] === 'Q' ? 'the queen' : card.targetSan?.[0] === 'K' ? 'the king' : 'a pawn'} move is part of the saved line.`}); }}>Show a piece hint</Button>}{!graded ? <Button variant="ghost" onClick={failCard} disabled={savingAttempt || Boolean(pendingAttempt)}>Show solution</Button> : <Button variant="primary" icon="forward" onClick={nextCard}>{activeIndex + 1 < sessionIds.length ? 'Next position' : 'Finish session'}</Button>}<div className="schedule-preview"><span>Next review</span><strong>{card.dueAt ? shortDate(card.dueAt) : 'After this session'}</strong><small>Intervals adapt to your answer, using SM-2 scheduling.</small></div></aside></section> : started ? <section className="panel session-complete"><div className="complete-mark"><Icon name="check" size={25}/></div><p className="eyebrow">SESSION COMPLETE</p><h2>{sessionIds.length ? `You reviewed ${sessionIds.length} position${sessionIds.length === 1 ? '' : 's'}.` : 'Nothing was due right now.'}</h2><p>{sessionResults.filter((x) => x === 'recalled').length} recalled without help · {sessionResults.filter((x) => x === 'assisted').length} with a hint · {sessionResults.filter((x) => ['missed', 'revealed'].includes(x)).length} to revisit. All {sessionResults.length} results saved.</p><Button variant="primary" icon="training" onClick={() => { setSessionIds([]); setActiveIndex(0); }}>Back to studio</Button>{dueCards.length > 0 && <Button onClick={beginSession}>Practice next {Math.min(5, dueCards.length)}</Button>}</section> : <div className="training-start-grid"><section className="panel training-start-card"><div className="training-orbit"><Icon name="training" size={27}/></div><p className="eyebrow">TODAY’S RECALL</p><h2>{dueCards.length ? `${dueCards.length} position${dueCards.length === 1 ? ' is' : 's are'} ready.` : 'A clear board.'}</h2><p>{dueCards.length ? 'Up to 5 due positions per session. Recall first; hints and reveals are recorded honestly.' : cards.length ? 'Your next reviews are scheduled. Add critical moments or lines when you finish studying.' : 'Add engine-confirmed mistakes or a prepared opening line. The queue stays grounded in your own study.'}</p><Button variant="primary" icon="play" onClick={beginSession} disabled={!dueCards.length}>Start session</Button></section><section className="panel schedule-panel"><div className="panel-heading"><div><p className="eyebrow">REVIEW SCHEDULE</p><h2>Due cards</h2></div><Pill>{cards.length} saved</Pill></div>{cards.length ? <div className="schedule-list">{cards.slice(0, 6).map((item) => <div className="schedule-item" key={item.id}><span className="schedule-status"><Icon name={new Date(item.dueAt) <= new Date() ? 'clock' : 'check'} size={14}/></span><span><strong>{item.sourceName || item.name || item.sourceType}</strong><small>{item.sourceType === 'critical' ? `${item.label} · move ${Math.ceil(item.ply / 2)}` : item.sourceType === 'engine-position' ? 'Analysis board position' : `Move ${Math.ceil(item.ply / 2)} · ${item.color === 'w' ? 'White' : 'Black'} to move`}</small></span><span className="schedule-date">{item.retiredAt ? 'Paused · line changed' : new Date(item.dueAt) <= new Date() ? 'Due now' : shortDate(item.dueAt)}</span></div>)}</div> : <EmptyState icon="clock" title="No cards yet" description="Cards are created from your engine reviews and preparation lines." action={<Button onClick={() => setShowAddSources(true)}>Choose a source</Button>} />}</section></div>}
-    {enginePositions.length > 0 && <p className="classification-note">{enginePositions.length} engine-analyzed board position{enginePositions.length === 1 ? '' : 's'} available for practice.</p>}
+    {started && card ? <section className="training-session-grid" ref={sessionRef}><section className="panel training-board-panel"><div className="training-session-top"><div><p className="eyebrow">REVIEW {Math.min(progress + 1, sessionIds.length)} OF {sessionIds.length}</p><h2>{card.sourceName || card.name || 'Study position'}</h2></div><Pill tone={card.sourceType === 'critical' ? 'warm' : card.sourceType === 'engine-position' ? 'good' : 'neutral'}>{card.sourceType === 'critical' ? 'Engine critical moment' : card.sourceType === 'engine-position' ? 'Saved engine position' : 'Prepared line'}</Pill></div><ChessBoard fen={fen || card.fen} interactive={!graded && !savingAttempt && !pendingAttempt} onMove={onTryMove} orientation={card.color || 'w'}/><div className="training-board-foot"><span><Icon name="clock" size={14}/> {card.sourceType === 'critical' ? `Move ${Math.ceil(card.ply / 2)} · ${card.label}` : card.sourceType === 'engine-position' ? 'Analysis board position' : `Move ${Math.ceil(card.ply / 2)} · ${card.sourceName || 'repertoire'}`}</span><span>{graded ? 'Result saved' : `${card.color === 'w' ? 'White' : 'Black'} to move`}</span></div></section><aside className="panel training-feedback-panel"><p className="eyebrow">RECALL FIRST</p><h2>{graded ? 'Position reviewed' : card.sourceType === 'repertoire' ? 'Find the prepared move.' : 'Find a strong engine line.'}</h2><p className="training-prompt">Tap a piece, then its destination.</p>{feedback && <div className={`training-feedback feedback-${feedback.tone}`} role="status"><Icon name={feedback.tone === 'good' ? 'check' : 'spark'} size={17}/><span>{feedback.text}</span></div>}{graded && savedTakeaway && <div className="training-takeaway"><p className="eyebrow">YOUR SAVED TAKEAWAY</p><p>{savedTakeaway}</p></div>}{pendingAttempt && !savingAttempt && <Button variant="primary" onClick={() => saveAttempt(pendingAttempt)}>Retry saving attempt</Button>}{!graded && !pendingAttempt && <Button variant="secondary" onClick={() => { setAssisted(true); setFeedback({ tone: 'warm', text: `Hint: ${card.targetSan?.[0] === 'N' ? 'a knight' : card.targetSan?.[0] === 'B' ? 'a bishop' : card.targetSan?.[0] === 'R' ? 'a rook' : card.targetSan?.[0] === 'Q' ? 'the queen' : card.targetSan?.[0] === 'K' ? 'the king' : 'a pawn'} move is part of the saved line.`}); }}>Show a piece hint</Button>}{!graded ? <Button variant="ghost" onClick={failCard} disabled={savingAttempt || Boolean(pendingAttempt)}>Show solution</Button> : <Button variant="primary" icon="forward" onClick={nextCard}>{activeIndex + 1 < sessionIds.length ? 'Next position' : 'Finish session'}</Button>}<div className="schedule-preview"><span>Next review</span><strong>{card.dueAt ? shortDate(card.dueAt) : 'After this session'}</strong><small>Intervals adapt to your answer, using SM-2 scheduling.</small></div></aside></section> : started ? <section className="panel session-complete"><div className="complete-mark"><Icon name="check" size={25}/></div><p className="eyebrow">SESSION COMPLETE</p><h2>{sessionIds.length ? `You reviewed ${sessionIds.length} position${sessionIds.length === 1 ? '' : 's'}.` : 'Nothing was due right now.'}</h2><p>{sessionResults.filter((x) => x === 'recalled').length} recalled without help · {sessionResults.filter((x) => x === 'assisted').length} with a hint · {sessionResults.filter((x) => ['missed', 'revealed'].includes(x)).length} to revisit. All {sessionResults.length} results saved.</p><Button variant="primary" icon="training" onClick={() => { setSessionIds([]); setActiveIndex(0); }}>Back to studio</Button>{dueCards.length > 0 && <Button onClick={beginSession}>Practice next {Math.min(5, dueCards.length)}</Button>}</section> : <div className="training-start-grid"><section className="panel training-start-card"><div className="training-orbit"><Icon name="training" size={27}/></div><p className="eyebrow">TODAY’S RECALL</p><h2>{dueCards.length ? `${dueCards.length} position${dueCards.length === 1 ? ' is' : 's are'} ready.` : 'A clear board.'}</h2><p>{dueCards.length ? 'Up to 5 due positions per session. Recall first; hints and reveals are recorded honestly.' : cards.length ? 'Your next reviews are scheduled. Add critical moments or lines when you finish studying.' : 'Add engine-confirmed mistakes or a prepared opening line. The queue stays grounded in your own study.'}</p><Button variant="primary" icon="play" onClick={beginSession} disabled={!dueCards.length}>Start session</Button></section><section className="panel schedule-panel"><div className="panel-heading"><div><p className="eyebrow">REVIEW SCHEDULE</p><h2>Saved schedule</h2></div><Pill>{cards.length} saved</Pill></div>{cards.length ? <div className="schedule-list">{scheduleCards.slice(0, 6).map((item) => { const dueAt = item.dueAt || item.createdAt; const isDue = Number.isFinite(Date.parse(dueAt)) && Date.parse(dueAt) <= Date.now(); return <div className="schedule-item" key={item.id}><span className="schedule-status"><Icon name={item.retiredAt ? 'minus' : isDue ? 'clock' : 'check'} size={14}/></span><span><strong>{item.sourceName || item.name || item.sourceType}</strong><small>{item.sourceType === 'critical' ? `${item.label} · move ${Math.ceil(item.ply / 2)}` : item.sourceType === 'engine-position' ? 'Analysis board position' : `Move ${Math.ceil(item.ply / 2)} · ${item.color === 'w' ? 'White' : 'Black'} to move`}</small></span><span className="schedule-date">{item.retiredAt ? 'Paused · line changed' : isDue ? 'Due now' : shortDate(dueAt)}</span></div>; })}</div> : <EmptyState icon="clock" title="No cards yet" description="Cards are created from your engine reviews and preparation lines." action={<Button onClick={() => setShowAddSources(true)}>Choose a source</Button>} />}</section></div>}
   </>;
 }
 
@@ -373,7 +373,7 @@ function boardTreeFromParsed(parsed) {
   return parsed.root;
 }
 
-export function BoardLabView({ onSaveGame, onAnalyzeBoard, onSaveEnginePosition, onCancelAnalysis, engineStatus, engineName, analysisState, engineDownload, currentInfo }) {
+export function BoardLabView({ onSaveGame, onAnalyzeBoard, onSaveEnginePosition, onCancelAnalysis, onStopAnalysis, engineStatus, engineName, analysisState, engineDownload, currentInfo }) {
   const treeRef = useRef(null);
   const [fen, setFen] = useState(new Chess().fen());
   const [cursor, setCursor] = useState(null);
@@ -385,6 +385,9 @@ export function BoardLabView({ onSaveGame, onAnalyzeBoard, onSaveEnginePosition,
   const [error, setError] = useState('');
   const [analysis, setAnalysis] = useState(null);
   const [searching, setSearching] = useState(false);
+  const [liveSearch, setLiveSearch] = useState(false);
+  const [stoppingLive, setStoppingLive] = useState(false);
+  const [liveEnabled, setLiveEnabled] = useState(false);
   const analysisBusy = ['starting', 'downloading', 'analyzing'].includes(analysisState);
   const [multi, setMulti] = useState(2);
   const [limit, setLimit] = useState(12);
@@ -394,6 +397,11 @@ export function BoardLabView({ onSaveGame, onAnalyzeBoard, onSaveEnginePosition,
   fenRef.current = fen;
   const revisionRef = useRef(revision);
   revisionRef.current = revision;
+  const searchingRef = useRef(searching);
+  searchingRef.current = searching;
+  const livePositionRef = useRef({ fen, revision });
+  const liveRestartPending = useRef(false);
+  useEffect(() => () => { if (searchingRef.current) onCancelAnalysis?.(); }, []);
   if (!treeRef.current) treeRef.current = { id: 'root', san: '', fen: new Chess().fen(), comment: '', nags: [], children: [], parent: null, ply: 0, headers: {} };
   const currentTree = treeRef.current;
   const currentNode = currentTree ? findNode(currentTree, cursor || currentTree.id) : null;
@@ -401,7 +409,7 @@ export function BoardLabView({ onSaveGame, onAnalyzeBoard, onSaveEnginePosition,
   const lines = analysis?.fen === fen && analysis.revision === revision && analysis.depth === limit && analysis.multipv === multi ? analysis.variations : [];
 
   const newTree = (rootFen, rootHeaders = {}) => ({ id: 'root', san: '', fen: rootFen, comment: '', nags: [], children: [], parent: null, ply: 0, headers: rootHeaders });
-  const onNewGame = () => { if (searching) onCancelAnalysis?.(); const root = newTree(STANDARD_START_FEN); treeRef.current = root; setCursor(root.id); setFen(root.fen); setAnalysis(null); setFeedback('New game started.'); setError(''); setFileName('Untitled study'); setRevision((value) => value + 1); };
+  const onNewGame = () => { if (searching) { onCancelAnalysis?.(); setSearching(false); } const root = newTree(STANDARD_START_FEN); treeRef.current = root; setCursor(root.id); setFen(root.fen); setAnalysis(null); setFeedback('New game started.'); setError(''); setFileName('Untitled study'); setRevision((value) => value + 1); };
   const onMove = (move) => {
     if (searching) { onCancelAnalysis?.(); setSearching(false); }
     if (liveChess?.isGameOver()) { setFeedback(boardMessage); return; }
@@ -427,7 +435,7 @@ export function BoardLabView({ onSaveGame, onAnalyzeBoard, onSaveEnginePosition,
     } catch (issue) { setError(`Invalid FEN: ${issue.message}`); }
   };
   const importPgn = () => {
-    if (searching) onCancelAnalysis?.();
+    if (searching) { onCancelAnalysis?.(); setSearching(false); }
     try {
       const parsed = parsePgnTree(pgnInput);
       treeRef.current = boardTreeFromParsed(parsed); setCursor(parsed.root.children[0]?.id || parsed.root.id); setFen(parsed.root.children[0]?.fen || parsed.startFen); setAnalysis(null); setError(''); setFeedback(`${parsed.mainline.length} mainline plies loaded. Variations are available at their branch points.`); setFileName(parsed.headers.Event || parsed.headers.White ? `${parsed.headers.White || 'White'} vs ${parsed.headers.Black || 'Black'}` : 'Imported study'); setRevision((revision) => revision + 1);
@@ -476,21 +484,36 @@ export function BoardLabView({ onSaveGame, onAnalyzeBoard, onSaveEnginePosition,
     goTo(first);
     setFeedback('Stockfish variation added to the move tree. Use the board controls to replay it, or save the study.');
   };
-  const runAnalysis = async () => {
+  const runAnalysis = async (infinite = false) => {
+    if (searching || analysisBusy) return;
     if (liveChess.isGameOver()) { setAnalysis(null); setFeedback(boardMessage); setError(''); return; }
     const targetFen = fen;
     const targetRevision = revisionRef.current;
     const targetDepth = limit, targetMulti = multi;
-    setSearching(true); setAnalysis(null); setError(''); setFeedback('');
+    liveRestartPending.current = false;
+    setLiveEnabled(infinite);
+    setSearching(true); setLiveSearch(infinite); setStoppingLive(false); setAnalysis(null); setError(''); setFeedback('');
     try {
-      const result = await onAnalyzeBoard(targetFen, { depth: targetDepth, multipv: targetMulti });
+      const result = await onAnalyzeBoard(targetFen, { depth: targetDepth, multipv: targetMulti, infinite });
       if (fenRef.current !== targetFen || revisionRef.current !== targetRevision) { setError('The position changed while Stockfish was searching. Run analysis again for the current board.'); return; }
       const variations = (result.variations || []).filter((line) => line.depth > 0 && line.pv?.length > 0 && line.score && variationPositions(targetFen, line.pv).length > 1);
       if (!variations.length) throw new Error('Stockfish returned no legal continuation for this position. Check the position and try again.');
       setAnalysis({ fen: targetFen, revision: targetRevision, depth: targetDepth, multipv: targetMulti, variations });
-    } catch (issue) { setError(issue.message); }
-    finally { setSearching(false); }
+    } catch (issue) { if (issue?.name !== 'AbortError') setError(issue.message); }
+    finally { setSearching(false); setLiveSearch(false); setStoppingLive(false); }
   };
+  useEffect(() => {
+    const previous = livePositionRef.current;
+    const changed = previous.fen !== fen || previous.revision !== revision;
+    livePositionRef.current = { fen, revision };
+    if (changed && liveEnabled) liveRestartPending.current = true;
+    if (!liveEnabled) liveRestartPending.current = false;
+    if (liveEnabled && liveRestartPending.current && !searching && !analysisBusy) {
+      liveRestartPending.current = false;
+      void runAnalysis(true);
+    }
+  }, [fen, revision, liveEnabled, searching, analysisBusy]);
+  const stopLiveSearch = () => { if (stoppingLive) return; setLiveEnabled(false); setStoppingLive(true); onStopAnalysis?.(); };
   const saveLinePosition = async (line) => {
     if (!line?.pv?.[0] || !lines.includes(line)) return;
     const chess = new Chess(fen);
@@ -504,17 +527,30 @@ export function BoardLabView({ onSaveGame, onAnalyzeBoard, onSaveEnginePosition,
   const sideToMove = liveChess.turn() === 'w' ? 'White' : 'Black';
   const boardMessage = liveChess.isCheckmate() ? `${sideToMove} is checkmated.` : liveChess.isStalemate() ? 'Draw by stalemate.' : liveChess.isThreefoldRepetition() ? 'Threefold repetition — a draw can be claimed.' : liveChess.isDrawByFiftyMoves() ? 'Fifty-move rule — a draw can be claimed.' : liveChess.isInsufficientMaterial() ? 'Draw by insufficient material.' : liveChess.isCheck() ? `${sideToMove} to move · check` : `${sideToMove} to move`;
   const terminalPosition = liveChess.isGameOver();
+  const terminalWinner = liveChess.isCheckmate() ? (liveChess.turn() === 'w' ? 'b' : 'w') : null;
+  const terminalEval = terminalPosition ? {
+    winner: terminalWinner,
+    label: liveChess.isCheckmate() ? `${terminalWinner === 'w' ? 'White' : 'Black'} wins · checkmate` : liveChess.isStalemate() ? 'Draw by stalemate' : liveChess.isInsufficientMaterial() ? 'Draw · insufficient material' : 'Draw available',
+  } : null;
+  const liveInfo = searching && currentInfo?.rootFen === fen ? currentInfo : null;
+  const streamedLines = (liveInfo?.currentLines || (liveInfo?.pv?.length ? [liveInfo] : []))
+    .filter((line) => line?.score && line.pv?.length)
+    .sort((left, right) => left.multipv - right.multipv);
+  const displayLines = searching ? streamedLines : lines;
+  const evaluationLine = displayLines.find((line) => line.multipv === 1) || displayLines[0] || null;
+  const barModel = evaluationBarModel(terminalPosition ? null : evaluationLine?.score, liveChess.turn(), terminalEval);
+  const suggestedMove = !terminalPosition ? evaluationLine?.pv?.[0] || '' : '';
   const positionLabel = activeLine.length ? `Ply ${activeLine.length}` : currentTree.fen === STANDARD_START_FEN ? 'Starting position' : 'Loaded position';
   const boardBadge = liveChess.isCheckmate() ? 'Checkmate' : liveChess.isStalemate() ? 'Stalemate' : terminalPosition ? 'Draw' : liveChess.isCheck() ? 'Check' : 'Ready';
   return <>
     <SectionTitle eyebrow="ANALYSIS BOARD" title="Explore a position." description="Play moves, explore alternatives, and ask Stockfish." action={<div className="review-title-actions"><Button icon="rotate" onClick={onNewGame}>New board</Button><Button icon="download" onClick={exportPgn}>Export PGN</Button></div>} />
-    {analysisState === 'downloading' && <div className="analysis-progress board-download-progress"><div className="progress-copy"><span>Downloading Stockfish 18</span><strong>{engineDownload?.percent ?? 0}%</strong></div><div className="progress-track"><span style={{ width: `${engineDownload?.percent ?? 0}%` }}/></div><small>7.3 MB lite WASM · cached on this device for offline analysis</small></div>}{searching && analysisState === 'analyzing' && <div className="analysis-progress board-download-progress"><div className="progress-copy"><span>Local engine search</span><strong>{currentInfo?.depth ? `Depth ${currentInfo.depth}` : 'Running'}</strong></div><div className="progress-track"><span className="progress-indeterminate"/></div><small>{currentInfo?.nodes ? `${currentInfo.nodes.toLocaleString()} nodes` : 'Searching in a Web Worker'}</small></div>}
+    {analysisState === 'downloading' && <div className="analysis-progress board-download-progress"><div className="progress-copy"><span>Downloading Stockfish 18</span><strong>{engineDownload?.percent ?? 0}%</strong></div><div className="progress-track"><span style={{ width: `${engineDownload?.percent ?? 0}%` }}/></div><small>7.3 MB lite WASM · cached on this device for offline analysis</small></div>}{searching && analysisState === 'analyzing' && <div className="analysis-progress board-download-progress"><div className="progress-copy"><span>{liveSearch ? 'Live local engine search' : 'Local engine search'}</span><strong>{liveInfo?.depth ? `Depth ${liveInfo.depth}` : 'Running'}</strong></div><div className="progress-track"><span className="progress-indeterminate"/></div><small>{liveInfo?.nodes ? `${liveInfo.nodes.toLocaleString()} nodes · current best line updates as Stockfish searches` : 'Searching in a Web Worker'}</small></div>}
     <div className="board-status board-lab-status"><span className={`turn-dot${terminalPosition ? ' draw-dot' : ''}`}/>{boardMessage}<span className="board-status-ply">{positionLabel}</span></div>
     {error && <div className="inline-error"><Icon name="spark"/>{error}<button onClick={() => setError('')} aria-label="Dismiss error"><Icon name="close" size={14}/></button></div>}
     <div className="board-lab-layout" data-mobile-panel={mobilePanel}>
       <section className="panel board-lab-board">
         <div className="player-row"><span className={`player-avatar player-${orientation === 'w' ? 'black' : 'white'}`}>{orientation === 'w' ? '♚' : '♔'}</span><div><strong>{orientation === 'w' ? 'Black pieces' : 'White pieces'}</strong><small>Study position</small></div></div>
-        <ChessBoard fen={fen} startFen={currentTree.fen} historyMoves={activeLine.map((node) => node.san)} interactive={!liveChess.isGameOver()} onMove={onMove} orientation={orientation} onOrientationChange={setOrientation} lastMove={currentNode?.move ? { from: currentNode.move.from, to: currentNode.move.to } : null}/>
+        <ChessBoard fen={fen} startFen={currentTree.fen} historyMoves={activeLine.map((node) => node.san)} interactive={!liveChess.isGameOver()} onMove={onMove} orientation={orientation} onOrientationChange={setOrientation} lastMove={currentNode?.move ? { from: currentNode.move.from, to: currentNode.move.to } : null} suggestedMove={suggestedMove} evaluationBar={<EvaluationBar model={barModel}/>}/>
         <div className="player-row player-row-bottom"><span className={`player-avatar player-${orientation === 'w' ? 'white' : 'black'}`}>{orientation === 'w' ? '♔' : '♚'}</span><div><strong>{orientation === 'w' ? 'White pieces' : 'Black pieces'}</strong><small>{liveChess.moves().length ? 'Legal moves · promotion · castling · en passant' : 'No legal moves'}</small></div><Pill>{boardBadge}</Pill></div>
         <div className="board-controls"><IconTextButton label="Undo" icon="back" onClick={undo} disabled={!currentNode?.parent}/><IconTextButton label="Previous move" icon="chevron" onClick={() => goTo(currentNode?.parent)} disabled={!currentNode?.parent}/><span className="ply-counter">{activeLine.length} plies · {currentMoves.length} continuation{currentMoves.length === 1 ? '' : 's'}</span><IconTextButton label="Continue main line" icon="forward" onClick={redo} disabled={!currentMoves.length || liveChess.isGameOver()}/></div>
         <div className="mobile-board-panels" role="group" aria-label="Study panels">{[["moves", "Moves"], ["engine", "Engine"], ["tools", "FEN / PGN"]].map(([key, label]) => <button key={key} type="button" aria-pressed={mobilePanel === key} onClick={() => setMobilePanel(key)}>{label}</button>)}</div>
@@ -527,9 +563,12 @@ export function BoardLabView({ onSaveGame, onAnalyzeBoard, onSaveEnginePosition,
             <label>Depth<select disabled={analysisBusy || terminalPosition} value={limit} onChange={(event) => setLimit(Number(event.target.value))}><option value="10">10 · quick</option><option value="12">12 · standard</option><option value="16">16 · thorough</option></select></label>
             <label>Lines<select disabled={analysisBusy || terminalPosition} value={multi} onChange={(event) => setMulti(Number(event.target.value))}><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
           </div>
-          <Button variant="primary" icon={searching ? 'stop' : 'play'} onClick={runAnalysis} disabled={searching || analysisBusy || terminalPosition}>{terminalPosition ? 'Position over' : searching ? 'Searching…' : analysisBusy ? 'Engine busy' : 'Analyze position'}</Button>
-          {searching && <Button variant="ghost" onClick={() => { onCancelAnalysis?.(); setSearching(false); }}>Cancel search</Button>}
-          {terminalPosition ? <div className="engine-terminal" role="status"><strong>{boardMessage}</strong><span>No engine score is shown for a finished position.</span></div> : lines.length > 0 ? <div className="engine-lines">{lines.map((line) => { const chess = new Chess(fen); const move = chess.moves({ verbose: true }).find((item) => variationUci(item) === line.pv[0]); return <div className="engine-line" key={line.multipv}><div className="engine-line-top"><Pill tone={line.multipv === 1 ? 'good' : 'neutral'}>{formatScore(line.score)}</Pill><strong>{move?.san || line.pv[0]}</strong><small>d{line.depth}</small><IconButton label="Add this line to training" icon="training" onClick={() => saveLinePosition(line)}/></div><p>{line.san}</p><button className="text-link engine-replay" onClick={() => replayEngineLine(line)}>Replay in move tree</button></div>; })}</div> : <p className="engine-hint">Analyze this position on your device. First use downloads 7.3 MB; then analysis works offline.</p>}
+          <div className="engine-actions">
+            <Button variant="primary" icon={searching && liveSearch ? 'stop' : 'play'} onClick={searching && liveSearch ? stopLiveSearch : () => runAnalysis(false)} disabled={terminalPosition || (searching ? !liveSearch || analysisState !== 'analyzing' || stoppingLive : analysisBusy)}>{terminalPosition ? 'Position over' : searching && liveSearch && stoppingLive ? 'Stopping…' : searching && liveSearch && analysisState === 'analyzing' ? 'Stop & keep line' : searching ? 'Searching…' : analysisBusy ? 'Engine busy' : 'Search to depth'}</Button>
+            {!searching && <Button variant="ghost" icon="spark" onClick={() => runAnalysis(true)} disabled={analysisBusy || terminalPosition}>Run live engine</Button>}
+            {searching && (!liveSearch || analysisState !== 'analyzing') && <Button variant="ghost" onClick={() => { setLiveEnabled(false); liveRestartPending.current = false; onCancelAnalysis?.(); setSearching(false); }}>Cancel search</Button>}
+          </div>
+          {terminalPosition ? <div className="engine-terminal" role="status"><strong>{boardMessage}</strong><span>No engine score is shown for a finished position.</span></div> : displayLines.length > 0 ? <div className="engine-lines"><div className="engine-lines-caption">{searching ? 'CURRENT LINES · PROVISIONAL' : 'BEST LINES'}{evaluationLine?.depth ? <span>depth {evaluationLine.depth}</span> : null}</div>{displayLines.map((line) => { const chess = new Chess(fen); const move = chess.moves({ verbose: true }).find((item) => variationUci(item) === line.pv[0]); const moveName = move?.san || line.pv[0]; const sanLine = line.san || variationPositions(fen, line.pv).slice(1).map((position) => position.move?.san).filter(Boolean).join(' '); return <div className="engine-line" key={line.multipv}><div className="engine-line-top"><Pill tone={line.multipv === 1 ? 'good' : 'neutral'}>{formatScore(line.score)}</Pill><strong>{moveName}</strong><small>d{line.depth}</small><IconButton label={`Add ${moveName} to training`} icon="training" disabled={searching || !lines.includes(line)} onClick={() => saveLinePosition(line)}/></div><p>{sanLine}</p><button className="text-link engine-replay" disabled={searching} onClick={() => replayEngineLine(line)}>{searching ? 'Stop search to explore this line' : 'Replay in move tree'}</button></div>; })}</div> : <p className="engine-hint">Analyze this position on your device. First use downloads 7.3 MB; then analysis works offline.</p>}
           <p className="engine-footnote"><Icon name="shield" size={13}/>{engineName || 'Stockfish 18 lite'} · 1 worker · 32 MB hash</p>
         </section>
         <section className="panel position-tools"><div className="mobile-file-actions"><Button icon="rotate" onClick={onNewGame}>New board</Button><Button icon="download" onClick={exportPgn}>Export PGN</Button></div><div className="panel-heading"><div><p className="eyebrow">POSITION TOOLS</p><h2>FEN &amp; PGN</h2></div></div><label>Current FEN<div className="input-with-button"><input value={fen} readOnly aria-label="Current FEN"/><Button onClick={copyFen}>Copy</Button></div></label><form onSubmit={(event) => { event.preventDefault(); setPosition(fenInput); setFenInput(''); }}><label>Load FEN<div className="input-with-button"><input value={fenInput} onChange={(event) => setFenInput(event.target.value)} placeholder="Paste a legal FEN…"/><Button type="submit">Load</Button></div></label></form><label>Import PGN with variations<textarea value={pgnInput} onChange={(event) => setPgnInput(event.target.value)} rows={4} placeholder="Paste a game or study with (variations)"/></label><Button icon="upload" onClick={importPgn} disabled={!pgnInput.trim()}>Load PGN study</Button><Button icon="save" onClick={saveStudy} disabled={!treeRef.current?.children?.length}>Save line to library</Button></section></aside></div>
@@ -538,7 +577,16 @@ export function BoardLabView({ onSaveGame, onAnalyzeBoard, onSaveEnginePosition,
   </>;
 }
 
-function IconButton({ label, icon, onClick }) { return <button className="icon-button" type="button" aria-label={label} title={label} onClick={onClick}><Icon name={icon} size={16}/></button>; }
+function EvaluationBar({ model }) {
+  const style = model.whiteShare == null ? undefined : { '--white-share': `${model.whiteShare}%` };
+  return <div className={`evaluation-gauge eval-gauge-${model.state}`} role="img" aria-label={`Evaluation bar: ${model.description}`} title={model.description}>
+    <span className="evaluation-gauge-score" aria-hidden="true">{model.label}</span>
+    <div className="evaluation-gauge-meter" data-state={model.state} style={style} aria-hidden="true"/>
+    <div className="evaluation-gauge-sides" aria-hidden="true"><span>B</span><span>W</span></div>
+  </div>;
+}
+
+function IconButton({ label, icon, onClick, disabled = false }) { return <button className="icon-button" type="button" aria-label={label} title={label} onClick={onClick} disabled={disabled}><Icon name={icon} size={16}/></button>; }
 function findNode(root, id) { if (!root) return null; if (root.id === id) return root; for (const child of root.children || []) { const node = findNode(child, id); if (node) return node; } return null; }
 function pathToNode(node) { const path = []; for (let cursor = node; cursor; cursor = cursor.parent) path.push(cursor); return path.reverse(); }
 function chessAtNode(root, node) {

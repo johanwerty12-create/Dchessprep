@@ -78,7 +78,8 @@ document.querySelector('#engine').onclick = run(async () => {
   check(digest === '2278005057f381491f1c9bb3e44c9f5920b3a00bef9759e33cc6582769a1f1fe', 'same-length corrupt engine cache recovers authentic bytes');
   let maxGap = 0, last = performance.now(), samples = 0;
   const timer = setInterval(() => { const now = performance.now(); maxGap = Math.max(maxGap, now - last); last = now; samples++; }, 20);
-  const engine = new StockfishEngine();
+  const infoUpdates = [];
+  const engine = new StockfishEngine({ onInfo: (info) => infoUpdates.push(info) });
   try {
     const start = performance.now();
     const name = await engine.ensureEngine();
@@ -86,7 +87,21 @@ document.querySelector('#engine').onclick = run(async () => {
     const searchStart = performance.now();
     const result = await engine.analyze('r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4', { depth: 12, multipv: 3 });
     check(result.bestmove === 'h5f7' && result.variations[0]?.score.kind === 'mate' && result.variations[0]?.score.value === 1, 'actual browser Stockfish finds Qxf7#');
+    const liveFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    const livePromise = engine.analyze(liveFen, { multipv: 2, infinite: true });
+    const liveStart = performance.now();
+    let liveInfo = null;
+    while (performance.now() - liveStart < 20_000 && !liveInfo) {
+      liveInfo = infoUpdates.filter((info) => info.rootFen === liveFen && info.currentLines?.some((line) => line.multipv === 1 && line.pv?.length)).at(-1) || null;
+      if (!liveInfo) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    check(Boolean(liveInfo?.depth && liveInfo.score?.perspective === 'w'), 'actual browser Stockfish streams a rooted, White-to-move live score');
+    check(Boolean(liveInfo?.currentLines?.find((line) => line.multipv === 1)?.pv?.length), 'live callback includes the current best MultiPV line');
+    await engine.stop();
+    const liveResult = await livePromise;
+    check(Boolean(liveResult.bestmove?.match(/^[a-h][1-8][a-h][1-8][qrbn]?$/) && liveResult.variations[0]?.pv?.length), 'stopping real browser infinite analysis preserves its move and principal variation');
     log(`Browser depth-12 search ${Math.round(performance.now() - searchStart)} ms; 20 ms timer max gap ${Math.round(maxGap)} ms over ${samples} samples`);
+    log(`Browser live search streamed depth ${liveInfo.depth}, then stopped at ${liveResult.bestmove}`);
     log(`Main-page heap (excludes worker/WASM): ${JSON.stringify(performance.memory || 'unavailable')}`);
     log(`Storage ${JSON.stringify(await navigator.storage.estimate())}`);
   } finally { clearInterval(timer); engine.restart(); }
@@ -107,12 +122,15 @@ document.querySelector('#board').onclick = run(async () => {
   await wait(() => doc.querySelector('.chess-board'));
   check(doc.documentElement.scrollWidth === doc.documentElement.clientWidth, '390px iframe app has no horizontal overflow');
   check(doc.querySelectorAll('.board-row').length === 8 && doc.querySelectorAll('.square[tabindex="0"]').length === 1, 'board exposes rows and one Tab entry point');
+  check(doc.querySelector('.evaluation-gauge')?.getAttribute('aria-label')?.includes('No engine evaluation yet') && doc.querySelector('.evaluation-gauge-meter')?.dataset.state === 'unavailable', 'analysis board evaluation bar starts explicitly unavailable rather than implying a 0.0 score');
   await Promise.all([...doc.querySelectorAll('.piece-svg')].map((img) => img.complete ? Promise.resolve() : new Promise((r) => { img.onload = r; img.onerror = r; })));
   check([...doc.querySelectorAll('.piece-svg')].every((img) => img.naturalWidth > 0), 'all starting-position SVG pieces decode');
   const geometry = () => {
     const rects = [...doc.querySelectorAll('.square')].map((square) => square.getBoundingClientRect());
     const widths = rects.map((r) => r.width), heights = rects.map((r) => r.height);
     check(rects.length === 64 && Math.max(...widths) - Math.min(...widths) < .1 && Math.max(...heights) - Math.min(...heights) < .1 && rects.every((r) => Math.abs(r.width - r.height) < .1), 'all 64 rendered cells are equal squares within 0.1 CSS pixel');
+    const boardRect = doc.querySelector('.chess-board').getBoundingClientRect(), barRect = doc.querySelector('.evaluation-gauge').getBoundingClientRect();
+    check(Math.abs(boardRect.top - barRect.top) < .1 && Math.abs(boardRect.bottom - barRect.bottom) < .1, 'evaluation bar aligns exactly with the board squares');
     log(`Geometry ${JSON.stringify({ minWidth: Math.min(...widths), maxWidth: Math.max(...widths), minHeight: Math.min(...heights), maxHeight: Math.max(...heights) })}`);
   };
   geometry();
@@ -173,12 +191,25 @@ document.querySelector('#board').onclick = run(async () => {
   check(doc.documentElement.scrollWidth === doc.documentElement.clientWidth, '320px phone has no horizontal overflow');
   check(doc.querySelector('.board-controls').getBoundingClientRect().bottom <= doc.querySelector('.mobile-nav').getBoundingClientRect().top, '320 by 568 phone shows board controls above navigation even after feedback');
   clickVisible('Engine'); await nextPaint();
-  clickVisible('Analyze position');
+  clickVisible('Search to depth');
   await wait(() => Boolean(doc.querySelector('.engine-lines .engine-line-top small')), 120000);
   check(Number(doc.querySelector('.engine-line-top small').textContent.replace(/^d/, '')) > 0, 'analysis board displays a scored Stockfish search with a real depth');
+  check(doc.querySelector('.evaluation-gauge')?.getAttribute('aria-label')?.includes('Stockfish score') && Boolean(doc.querySelector('.board-annotations .engine-suggestion')), 'real engine result updates the White-perspective evaluation bar and legal best-move arrow');
+  clickVisible('Run live engine');
+  await wait(() => doc.querySelector('.engine-lines-caption')?.textContent.includes('CURRENT LINES') && doc.querySelector('.engine-actions .button-primary')?.textContent.includes('Stop & keep line'), 120000);
+  check(Number(doc.querySelector('.engine-lines-caption span')?.textContent.replace(/^depth\s+/, '')) > 0 && Boolean(doc.querySelector('.board-annotations .engine-suggestion')), 'live Stockfish streams a depth-tagged best move onto the board');
+  const liveBeforeMove = fen();
   doc.querySelector('[data-square="e7"]').click(); await nextPaint();
   doc.querySelector('[data-square="e5"]').click(); await nextPaint();
-  check(fen().includes('/4p3/4P3/') && !doc.querySelector('.engine-lines'), 'changing the board clears Stockfish lines tied to the previous position');
+  check(fen() !== liveBeforeMove, 'the user can continue the study while live analysis is running');
+  await wait(() => doc.querySelector('.engine-lines-caption')?.textContent.includes('CURRENT LINES') && doc.querySelector('.engine-actions .button-primary')?.textContent.includes('Stop & keep line'), 120000);
+  check(Boolean(doc.querySelector('.board-annotations .engine-suggestion')) && Number(doc.querySelector('.engine-lines-caption span')?.textContent.replace(/^depth\s+/, '')) > 0, 'live Stockfish automatically analyzes the newly selected position');
+  clickVisible('Stop & keep line');
+  await wait(() => doc.querySelector('.engine-lines-caption')?.textContent === 'BEST LINES');
+  check(doc.querySelector('.engine-lines .engine-line-top strong')?.textContent && Boolean(doc.querySelector('.board-annotations .engine-suggestion')), 'gracefully stopping live analysis keeps its actual Stockfish principal variation');
+  doc.querySelector('[data-square="g1"]').click(); await nextPaint();
+  doc.querySelector('[data-square="f3"]').click(); await nextPaint();
+  check(fen().includes('/4p3/4P3/5N2/') && !doc.querySelector('.engine-lines') && !doc.querySelector('.board-annotations .engine-suggestion') && doc.querySelector('.evaluation-gauge-meter')?.dataset.state === 'unavailable', 'changing the board clears Stockfish lines, bar score, and suggestion tied to the previous position');
   await loadFen('r1bqkb1r/pppp1Qpp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4');
   check(doc.querySelector('.board-lab-status').textContent.includes('Black is checkmated') && doc.querySelector('.board-status-ply').textContent === 'Loaded position', 'loaded Scholar’s Mate FEN shows checkmate and position context');
   check(doc.querySelector('.player-row-bottom .pill').textContent.trim() === 'Checkmate' && doc.querySelector('.player-row-bottom small').textContent === 'No legal moves', 'checkmate footer does not reduce mate to a generic check state');

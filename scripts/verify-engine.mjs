@@ -220,6 +220,28 @@ try {
   assert.ok(opening.variations.length >= 2, 'MultiPV returns distinct engine lines');
   for (const line of opening.variations) assert.ok(uciFor(openingFen, line.pv[0]), `MultiPV ${line.multipv} first move is legal`);
 
+  await waitReady();
+  send('setoption name MultiPV value 2');
+  await waitReady();
+  const liveStart = lines.length;
+  send(`position fen ${openingFen}`);
+  send('go infinite');
+  const liveInfoIndex = await waitFor((line) => {
+    if (!line.startsWith('info ')) return false;
+    const info = parseUciInfo(line);
+    return info.multipv === 1 && info.depth >= 8 && info.score && info.pv.length > 0;
+  }, 'live-analysis principal variation', liveStart, 20_000);
+  const liveInfo = parseUciInfo(lines[liveInfoIndex]);
+  assert.ok(uciFor(openingFen, liveInfo.pv[0]), 'live Stockfish reports a legal best move before the search is stopped');
+  const liveStopStart = lines.length;
+  send('stop');
+  const liveBestmoveIndex = await waitFor((line) => line.startsWith('bestmove '), 'live-analysis stop', liveStopStart, 10_000);
+  const liveBestmove = lines[liveBestmoveIndex].split(/\s+/)[1];
+  const finalLiveInfo = lines.slice(liveStart, liveBestmoveIndex).filter((line) => line.startsWith('info ')).map(parseUciInfo).filter((info) => info.multipv === 1 && info.score && info.pv.length).at(-1);
+  assert.ok(uciFor(openingFen, liveBestmove), 'stopping a real infinite search returns a legal best move');
+  assert.ok(finalLiveInfo && uciFor(openingFen, finalLiveInfo.pv[0]), 'live analysis retains its latest legal MultiPV 1 line');
+  assert.equal(liveBestmove, finalLiveInfo.pv[0], 'the stopped infinite-search result agrees with its latest streamed best line');
+
   console.log(`Engine identity: ${identity}`);
   console.log('UCI initialization and exact packaged Stockfish 18 lite single WASM: passed');
   console.log(`Scholar’s Mate: ${scholarResult.bestmove} score ${scholarTop.score.kind} ${scholarTop.score.value}; post-checkmate UCI ${scholarAfterSearch.bestmove}; MultiPV ${scholarResult.variations.length}; ${scholarResult.elapsedMs} ms`);
@@ -229,6 +251,7 @@ try {
   console.log(`Forced-loss defense: ${defenseSearch.bestmove} score ${defenseTop.score.kind} ${defenseTop.score.value}; same-root restricted score ${defenseAfterTop.score.kind} ${defenseAfterTop.score.value} remains Black-perspective; ${defenseSearch.elapsedMs + defenseAfter.elapsedMs} ms`);
   console.log(`Stalemate: terminal result ${stalemateTerminal.result}; UCI ${stalemateSearch.bestmove}`);
   console.log(`Opening MultiPV: ${opening.variations.length} legal principal variations; ${opening.elapsedMs} ms`);
+  console.log(`Live UCI search: depth ${liveInfo.depth} first streamed ${liveInfo.pv[0]}, latest PV ${finalLiveInfo.pv[0]}; graceful stop returned ${liveBestmove}`);
   console.log('Worker flavor: lite single-threaded WASM, 32 MB hash');
 } finally {
   if (child.exitCode === null) {

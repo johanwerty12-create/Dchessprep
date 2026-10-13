@@ -9,6 +9,7 @@ const ENGINE_ASSET_SHA256 = new Map([
 ]);
 const START_TIMEOUT_MS = 20_000;
 const SEARCH_TIMEOUT_MS = 120_000;
+const LIVE_SEARCH_TIMEOUT_MS = 5 * 60_000;
 
 function scoreFromInfo(line) {
   const match = line.match(/\bscore\s+(cp|mate)\s+(-?\d+)/);
@@ -183,9 +184,9 @@ export class StockfishEngine {
     if (line.startsWith('info ')) {
       const info = parseInfo(line);
       if (info.score && this.search) {
-        const rootedInfo = { ...info, score: { ...info.score, perspective: this.search.perspective } };
-        this.onInfo?.(rootedInfo);
+        const rootedInfo = { ...info, score: { ...info.score, perspective: this.search.perspective }, rootFen: this.search.fen };
         this.search.lines.set(info.multipv, rootedInfo);
+        this.onInfo?.({ ...rootedInfo, currentLines: [...this.search.lines.values()] });
       } else if (info.score) this.onInfo?.(info);
     }
     for (const entry of [...this.pending]) {
@@ -207,7 +208,7 @@ export class StockfishEngine {
     }
   }
 
-  async analyze(fen, { depth = 12, movetime, multipv = 2, searchMoves = [] } = {}) {
+  async analyze(fen, { depth = 12, movetime, multipv = 2, searchMoves = [], infinite = false } = {}) {
     if (this.busy) throw new Error('Stockfish is already analyzing another position. Wait for that search or stop it first.');
     this.busy = true;
     try {
@@ -221,10 +222,10 @@ export class StockfishEngine {
       await Promise.race([this.#waitFor((line) => line === 'readyok', 10_000, 'Stockfish readiness'), timeoutPromise(10_000, 'Stockfish readiness')]);
       this.#post(`position fen ${fen}`);
       const finish = new Promise((resolve, reject) => {
-        this.search = { lines, perspective, resolve, reject, timer: setTimeout(() => this.#fail(new Error('Stockfish analysis exceeded the two minute safety limit.')), SEARCH_TIMEOUT_MS) };
+        this.search = { lines, perspective, fen, resolve, reject, timer: setTimeout(() => this.#fail(new Error(`Stockfish ${infinite ? 'live analysis' : 'analysis'} exceeded its safety limit. Restart the engine and try again.`)), infinite ? LIVE_SEARCH_TIMEOUT_MS : SEARCH_TIMEOUT_MS) };
       });
       this.onStatus?.('analyzing');
-      const limit = movetime ? `movetime ${Math.max(50, Math.min(5_000, Math.round(movetime)))}` : `depth ${Math.max(6, Math.min(24, Math.round(depth)))}`;
+      const limit = infinite ? 'infinite' : movetime ? `movetime ${Math.max(50, Math.min(5_000, Math.round(movetime)))}` : `depth ${Math.max(6, Math.min(24, Math.round(depth)))}`;
       const searchMovesText = allowedMoves.length ? ` searchmoves ${allowedMoves.join(' ')}` : '';
       this.#post(`go ${limit}${searchMovesText}`);
       return await finish;

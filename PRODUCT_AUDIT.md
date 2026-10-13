@@ -1,5 +1,29 @@
 # Product and workspace audit — 2026-10-12
 
+## Release-quality follow-through — 2026-10-13
+
+Added a repeatable `npm run check:release` gate and a GitHub Actions workflow for
+pushes, pull requests, or manual runs on the release-candidate branch. It runs the
+unit suite, production build, compressed initial-route size budget, authentic
+Stockfish verification, asset-license checks, and static deployment/offline checks.
+The initial route is budgeted at 150 KiB gzip JavaScript and 20 KiB gzip CSS; the
+engine stays on demand. External actions are pinned to immutable commit SHAs and
+the checkout step does not persist credentials. No telemetry was added.
+
+Local evidence on this worktree: `npm run check:release` passed 56/56 tests, the
+production build, the actual packaged Stockfish 18 Lite WASM searches (including
+a seven-ply Scholar's Mate review with 13 same-root searches, final `Qxf7#` marked
+Best, about 2.4 seconds on this host), the piece-license/offline checks, the
+static deployment checks, and the gzip budgets. Initial assets measured 129.22
+kB JavaScript and 14.07 kB CSS in Vite output. CI has not run remotely because
+these changes have not been pushed. The current evaluation-bar/live-search UI
+changes were not run in a browser during this pass; browser and device checks
+remain separate acceptance gates. No commit, push, deployment, or data deletion.
+
+Verdict remains **BETA** until the updated board experience and workflow run are
+verified in browser/preview conditions. This audit does not claim competitive
+superiority or faster learning without player studies.
+
 **Resumed acceptance:** see `FINAL_ACCEPTANCE.md` for the completed production-browser
 journey, exact backup restore, mobile geometry, offline searches and real worker
 waiting/activation. The partial browser statuses below are historical evidence.
@@ -20,6 +44,39 @@ preference over established products and player retention have not been measured
 
 Official baseline consulted: https://lichess.org/features and
 https://lichess.org/@/lichess/blog/learn-from-your-mistakes/WFvLpiQA .
+
+## Follow-up product-quality pass — 2026-10-13
+
+Three workflow defects were fixed during the follow-up:
+
+- Multi-game imports now identify repeated games independently of their display
+  names. A numbered label added to the second copy could previously make the
+  same PGN appear new. Detection also reads the latest saved games before the
+  import, and batch detection includes earlier games from the same file. Tests
+  cover duplicate names, in-batch repetition, existing records, and distinct
+  opponent/color metadata.
+- The training overview now calls the list “Saved schedule” and sorts due cards
+  first, upcoming reviews by date, then paused positions. Previously it showed
+  every saved card under “Due cards,” including future and paused positions.
+- “Reviewed today” now groups timestamps in the player’s local timezone rather
+  than UTC, avoiding a wrong day around midnight in non-UTC regions.
+
+The current `npm run check:release` passed 59/59 automated tests, production
+build, initial-route size budgets, genuine packaged Stockfish 18 Lite WASM
+verification, asset licensing/offline coverage, and static deployment checks.
+The initial bundles measured 129.58 kB JavaScript and 14.07 kB CSS (Vite gzip
+figures); the independent gzip budget check reported 125.1 KiB JavaScript and
+13.6 KiB CSS, within 150/20 KiB budgets. Stockfish remains outside the initial
+bundle and was verified on demand. The complete engine verification ran a
+seven-ply Scholar’s Mate review with 13 searches, final `Qxf7#` classified Best,
+and terminal graph state in 2,689 ms on this host, plus Fool’s Mate, a legal
+mate-in-one, forced-loss defense, stalemate, MultiPV, live streaming and stop.
+
+This follow-up was not browser-tested: the available browser automation was
+unavailable for another interaction pass. No physical-device, remote CI,
+preview, or offline browser result is claimed. No dependency, commit, push,
+deployment, or user-data deletion was made. Verdict remains **BETA** until the
+current board and these workflow updates pass real browser acceptance.
 Established products already offer analysis, studies and mistake practice. Do not
 market those capabilities as exclusive inventions. The value proposition should
 describe the connected, private preparation workflow this app actually delivers.

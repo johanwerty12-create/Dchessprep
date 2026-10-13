@@ -45,14 +45,14 @@ The engine download is approximately 7.3 MB. These files are excluded from the i
 ## Verification
 
 ```sh
-npm test
-npm run verify:engine
-npm run build
-npm run check:pages
-npm run check:assets
+npm run check:release
 ```
 
-`verify:engine` starts the exact lite single WASM asset and checks its UCI identity, readiness, a mate-in-one position, and a legal opening-position result. The browser application additionally requires a modern browser with Web Workers, WebAssembly, IndexedDB, Cache Storage, and Service Workers. Service Workers require HTTPS in deployment (localhost is allowed during development).
+The release gate runs all unit tests, builds the production PWA, checks the initial JavaScript and CSS gzip budgets, searches positions with the exact Stockfish 18 lite WASM asset, verifies piece licensing and offline coverage, and checks static deployment paths and headers. Run an individual command such as `npm run verify:engine` when iterating on one area.
+
+GitHub Actions runs the same gate on pushes and pull requests targeting `codex/vercel-release-candidate`, and supports a manual run. The initial-route budgets are 150 KiB gzip for JavaScript and 20 KiB gzip for CSS; the Stockfish WASM stays out of the first load and remains separately byte-verified. Browser workflows and installed/offline device checks are acceptance steps beyond CI. The app has no telemetry, so release quality relies on reproducible tests and explicit preview acceptance rather than collecting player data.
+
+The browser application requires a modern browser with Web Workers, WebAssembly, IndexedDB, Cache Storage, and Service Workers. Service Workers require HTTPS in deployment (localhost is allowed during development).
 
 ## Deployment
 

@@ -10,7 +10,7 @@ const squares = Array.from({ length: 64 }, (_, i) => `${FILES[i % 8]}${8 - Math.
 const pieceLabel = (piece) => `${piece.color === 'w' ? 'white' : 'black'} ${PIECE_NAMES[piece.type]}`;
 const pieceUrl = (piece) => `/pieces/chessnut/${piece.color}${piece.type.toUpperCase()}.svg`;
 
-export function ChessBoard({ fen, onMove, interactive = false, orientation: suppliedOrientation, onOrientationChange, lastMove, checked = true, className = '', startFen, historyMoves = EMPTY_MOVES }) {
+export function ChessBoard({ fen, onMove, interactive = false, orientation: suppliedOrientation, onOrientationChange, lastMove, checked = true, className = '', startFen, historyMoves = EMPTY_MOVES, suggestedMove = '', evaluationBar = null }) {
   const [preferences, setPreferences] = useState(readBoardPreferences);
   const [orientation, setOrientation] = useState(() => suppliedOrientation || readBoardPreferences().orientation);
   const [selected, setSelected] = useState('');
@@ -43,6 +43,10 @@ export function ChessBoard({ fen, onMove, interactive = false, orientation: supp
   }, [fen, startFen, historyMoves]);
   const terminal = useMemo(() => ({ gameOver: chess.isGameOver(), mate: chess.isCheckmate(), stalemate: chess.isStalemate(), draw: chess.isDraw(), check: chess.isCheck() }), [chess]);
   const canMove = interactive && !terminal.gameOver && !promotion;
+  const suggestion = useMemo(() => {
+    if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(suggestedMove)) return null;
+    return chess.moves({ verbose: true }).find((move) => `${move.from}${move.to}${move.promotion || ''}` === suggestedMove) || null;
+  }, [chess, suggestedMove]);
   const selectedMoves = useMemo(() => selected && canMove ? chess.moves({ square: selected, verbose: true }) : [], [chess, selected, canMove]);
   const legalTargets = new Set(selectedMoves.map((move) => move.to));
   const turn = chess.turn() === 'w' ? 'White' : 'Black';
@@ -134,7 +138,9 @@ export function ChessBoard({ fen, onMove, interactive = false, orientation: supp
         <label><input type="checkbox" checked={preferences.destinations} onChange={(e) => savePreference({ destinations: e.target.checked })}/>Legal destinations</label>
       </div></details>
     </div>
-    <div className="board-surface">
+    <div className={evaluationBar ? 'board-with-evaluation' : 'board-surface-container'}>
+      {evaluationBar}
+      <div className="board-surface">
       <div ref={boardRef} className={`chess-board${drawMode ? ' is-annotating' : ''}`} role="grid" aria-readonly={!interactive} aria-rowcount="8" aria-colcount="8" aria-label={`Chessboard, ${orientation === 'w' ? 'White' : 'Black'} at bottom`} aria-describedby={`${arrowId}-instructions`}
         onPointerMove={pointerMove} onPointerUp={(e) => pointerEnd(e)} onPointerCancel={(e) => pointerEnd(e, true)} onContextMenu={(e) => e.preventDefault()}>
         {Array.from({ length: 8 }, (_, row) => <div role="row" className="board-row" key={row}>{Array.from({ length: 8 }, (_, col) => {
@@ -154,12 +160,13 @@ export function ChessBoard({ fen, onMove, interactive = false, orientation: supp
           </button>;
         })}</div>)}
       </div>
-      <svg className="board-annotations" viewBox="0 0 800 800" aria-hidden="true"><defs><marker id={arrowId} markerWidth="4" markerHeight="4" refX="2.5" refY="2" orient="auto"><path d="M0 0 L4 2 L0 4 Z"/></marker></defs>{displayedMarks.map(({ from, to }, i) => {
+      <svg className="board-annotations" viewBox="0 0 800 800" aria-hidden="true"><defs><marker id={arrowId} markerWidth="4" markerHeight="4" refX="2.5" refY="2" orient="auto"><path d="M0 0 L4 2 L0 4 Z"/></marker><marker id={`${arrowId}-engine`} className="engine-marker" markerWidth="4" markerHeight="4" refX="2.5" refY="2" orient="auto"><path d="M0 0 L4 2 L0 4 Z"/></marker></defs>{displayedMarks.map(({ from, to }, i) => {
         const a = squareCenter(from, orientation), b = squareCenter(to, orientation);
         return from === to ? <circle key={i} cx={a.x} cy={a.y} r="40"/> : <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} markerEnd={`url(#${arrowId})`}/>;
-      })}</svg>
+      })}{suggestion && <line className="engine-suggestion" x1={squareCenter(suggestion.from, orientation).x} y1={squareCenter(suggestion.from, orientation).y} x2={squareCenter(suggestion.to, orientation).x} y2={squareCenter(suggestion.to, orientation).y} markerEnd={`url(#${arrowId}-engine)`}/>}</svg>
       {drag && !drag.annotate && chess.get(drag.from) && <img className="piece-drag-ghost" src={pieceUrl(chess.get(drag.from))} alt="" style={{ left: `${drag.x}%`, top: `${drag.y}%` }} aria-hidden="true"/>}
       {promotion && <div ref={promotionRef} className="promotion-shade" role="dialog" aria-modal="true" aria-label="Choose a promotion piece"><div className="promotion-card"><p>Choose your promotion</p><div className="promotion-options">{['q', 'r', 'b', 'n'].map((type) => <button key={type} type="button" className="promotion-choice" onClick={() => finishPromotion(type)} aria-label={`Promote to ${PIECE_NAMES[type]}`}><img src={pieceUrl({ color: chess.turn(), type })} alt=""/><span>{PIECE_NAMES[type]}</span></button>)}</div><button className="text-button" type="button" onClick={() => setPromotion(null)}>Cancel</button></div></div>}
+      </div>
     </div>
     {drawMode && <div className="annotation-controls"><span>Tap two squares for an arrow; the same square for a circle.</span><div><label>From<select value={arrowFrom} onChange={(e) => setArrowFrom(e.target.value)}>{squares.map((s) => <option key={s}>{s}</option>)}</select></label><label>To<select value={arrowTo} onChange={(e) => setArrowTo(e.target.value)}>{squares.map((s) => <option key={s}>{s}</option>)}</select></label><button type="button" onClick={() => mark(arrowFrom, arrowTo)}>Mark position</button></div></div>}
     <p id={`${arrowId}-instructions`} className="visually-hidden">Arrow keys navigate squares. Enter or Space selects a piece and destination. Escape cancels selection. Use Annotate to draw without moving pieces.</p>

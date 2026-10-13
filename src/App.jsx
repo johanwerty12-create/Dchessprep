@@ -5,7 +5,7 @@ import { Chess } from 'chess.js';
 import { StockfishEngine, ENGINE_VERSION } from './engine.js';
 import { deleteRecord, deleteRecords, getRecord, listRecords, putRecord, putRecordReplacingIds, putRecords, replaceAllRecords, storageEstimate } from './db.js';
 import { acceptableReviewMoves, cleanText, classifyMove, gameFromPgn, makeBackup, makeId, materialPhase, parsePgn, resumableReviewPlyCount, REVIEW_METHOD, reviewUsesCurrentMethod, sameUciMove, scoreToWhite, terminalScore, variationUci, validateBackup, withReviewLearningNote } from './domain.js';
-import { isDuplicateImportedGame, linkedRecordsForGame, patchTournamentRound, reconcileRepertoirePractice, repertoireCardExists, supersededReviewIds } from './record-utils.js';
+import { deduplicateImportedGames, isDuplicateImportedGame, linkedRecordsForGame, patchTournamentRound, reconcileRepertoirePractice, repertoireCardExists, supersededReviewIds } from './record-utils.js';
 import { Button, Dialog, Icon, Pill, WorkspaceBoundary } from './components.jsx';
 import { BoardLabView, ClashView, DashboardView, LibraryView, PrepMapView, ReviewView, TournamentView, TrainingView } from './views.jsx';
 
@@ -124,14 +124,13 @@ function App() {
     for (const [index, segment] of segments.entries()) {
       try {
         const record = gameFromPgn(segment, extras);
-        if (segments.length > 1 && !extras.name) record.name = `${record.name} · ${index + 1}`;
         if (extras.name && segments.length === 1) record.name = cleanText(extras.name, 120);
         imported.push(record);
       } catch (issue) { throw new Error(`Game ${index + 1} could not be imported: ${issue.message}`); }
     }
-    const existingGames = records.filter((record) => record.kind === 'game');
-    const duplicates = imported.filter((record) => existingGames.some((existing) => isDuplicateImportedGame(existing, record)));
-    const toSave = imported.filter((record) => !duplicates.includes(record));
+    const existingGames = await listRecords('game');
+    const { unique: toSave, duplicates } = deduplicateImportedGames(existingGames, imported);
+    if (segments.length > 1 && !extras.name) toSave.forEach((record, index) => { record.name = `${record.name} · ${index + 1}`; });
     if (toSave.length) await putRecords(toSave);
     await refreshRecords();
     const selected = toSave[0] || existingGames.find((existing) => isDuplicateImportedGame(existing, imported[0]));
@@ -352,6 +351,7 @@ function App() {
     if (noteWrite.current) throw new Error('Wait for your takeaway to finish saving before starting analysis.');
     if (analysisController.current) throw new Error('Another Stockfish analysis is already running. Stop it before starting this search.');
     const controller = new AbortController(); analysisController.current = controller;
+    setEngineInfo(null);
     setAnalysisState('starting'); setEngineDownload({ percent: 0 });
     const downloadStatus = new Map();
     let succeeded = false;
@@ -372,6 +372,7 @@ function App() {
     } catch (issue) { if (issue?.name !== 'AbortError') setAnalysisState('failed'); throw issue; }
     finally { if (analysisController.current === controller) analysisController.current = null; if (controller.signal.aborted) setAnalysisState('idle'); else if (succeeded) setAnalysisState('complete'); }
   };
+  const stopAnalysisAndKeepResult = () => { engineRef.current?.stop().catch(() => {}); };
   analyzeBoard.cancel = cancelAnalysis;
 
   const exportGamePgn = (game) => downloadText(`${(game.name || 'chess-game').toLowerCase().replace(/[^a-z0-9]+/g, '-')}.pgn`, game.pgn, 'application/x-chess-pgn');
@@ -423,7 +424,7 @@ function App() {
           : view === 'training'
             ? <TrainingView initialCardId={workspaceRecordId} records={records} onAddReviewCards={addCriticalToTraining} onAddLineCards={addLineToTraining} onGradeCard={gradeTrainingCard} onSaveEnginePosition={saveEnginePosition} onNavigate={goto} />
             : view === 'board'
-              ? <BoardLabView onSaveGame={saveBoardPgn} onAnalyzeBoard={analyzeBoard} onCancelAnalysis={cancelAnalysis} onSaveEnginePosition={saveEnginePosition} engineStatus={engineStatus} engineName={engineName} analysisState={analysisState} engineDownload={engineDownload} currentInfo={engineInfo} />
+              ? <BoardLabView onSaveGame={saveBoardPgn} onAnalyzeBoard={analyzeBoard} onCancelAnalysis={cancelAnalysis} onStopAnalysis={stopAnalysisAndKeepResult} onSaveEnginePosition={saveEnginePosition} engineStatus={engineStatus} engineName={engineName} analysisState={analysisState} engineDownload={engineDownload} currentInfo={engineInfo} />
               : view === 'tournament'
                 ? <TournamentView initialRecordId={workspaceRecordId} records={records} onCreateTournament={addTournament} onCreateOpponent={addOpponent} onAddRound={addRound} onUpdateRound={updateRound} onDeleteTournament={removeTournament} onNavigate={goto} onOpenGame={(id) => { setActiveGameId(id); setReviewPly(0); goto('review'); }} />
                 : <LibraryView onNavigate={goto} records={records} onExportBackup={exportBackup} onRestoreBackup={restoreBackup} onDelete={deleteLibraryRecord} onOpenGame={(id) => { setActiveGameId(id); setReviewPly(0); goto('review'); }} storageUsage={storageUsage} storageError={error} />;

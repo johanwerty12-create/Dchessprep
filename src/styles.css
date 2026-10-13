@@ -281,6 +281,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .board-annotations line { stroke: #d58225; stroke-width: 17px; stroke-linecap: round; opacity: .82; }
 .board-annotations circle { stroke: #d58225; stroke-width: 10px; fill: none; opacity: .85; }
 .board-annotations marker path { fill: #d58225; }
+.board-annotations line.engine-suggestion { stroke: #4d9b74; stroke-width: 19px; stroke-linecap: round; opacity: .82; }
+.board-annotations marker.engine-marker path { fill: #4d9b74; }
 .annotation-controls { margin-top: 10px; color: var(--text-soft); font-size: 11px; line-height: 1.5; }
 .annotation-controls > div { display: flex; align-items: end; gap: 6px; margin-top: 8px; }
 .annotation-controls label { flex: 1; min-width: 0; }
@@ -638,6 +640,14 @@ option { color: var(--text); background: var(--surface); }
 .board-lab-layout { display: grid; grid-template-columns: minmax(400px, .98fr) minmax(320px, .8fr); align-items: start; gap: 13px; }
 .board-lab-board { padding: 14px; }
 .board-lab-board > .board-wrap { width: min(100%, 570px); margin: 0 auto; }
+.board-with-evaluation { display: grid; grid-template-columns: 28px minmax(0,1fr); align-items: stretch; gap: 5px; }
+.board-with-evaluation > .board-surface { min-width: 0; }
+.evaluation-gauge { display: flex; min-width: 0; align-items: center; flex-direction: column; gap: 5px; padding: 3px 0; }
+.evaluation-gauge-score { display: grid; width: 100%; min-height: 23px; place-items: center; overflow: hidden; color: var(--text-soft); background: var(--surface-muted); border: 1px solid var(--line); border-radius: 5px; font-size: 8px; font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
+.evaluation-gauge-meter { position: relative; width: 18px; min-height: 0; flex: 1; overflow: hidden; background: repeating-linear-gradient(135deg,var(--surface-muted),var(--surface-muted) 4px,var(--surface-raised) 4px,var(--surface-raised) 8px); border: 1px solid var(--line-strong); border-radius: 4px; }
+.evaluation-gauge-meter[data-state="scored"], .evaluation-gauge-meter[data-state$="mate"], .evaluation-gauge-meter[data-state$="win"] { background: linear-gradient(to top,#eeeadd 0%,#eeeadd var(--white-share),#243b30 var(--white-share),#243b30 100%); }
+.evaluation-gauge-meter[data-state="draw"] { background: repeating-linear-gradient(135deg,#8b938b,#8b938b 5px,#6d776e 5px,#6d776e 10px); }
+.evaluation-gauge-sides { display: flex; width: 100%; justify-content: space-between; color: var(--muted); font-size: 8px; font-weight: 700; }
 /* Keep the complete board and its navigation in view on desktop laptops. */
 @media (min-width: 1100px) {
   .board-lab-board > .board-wrap { width: min(100%, 570px, max(280px, calc(100dvh - 440px))); }
@@ -660,14 +670,18 @@ option { color: var(--text); background: var(--surface); }
 .variation-branches button small { color: var(--muted); font-size: 7px; }
 .board-lab-side { display: grid; gap: 12px; }
 .lab-engine-panel, .position-tools { padding: 14px; }
-.lab-engine-panel > .button-primary { width: 100%; }
+.engine-actions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; margin-top: 10px; }
+.engine-actions .button { min-width: 0; min-height: 42px; padding-right: 7px; padding-left: 7px; font-size: 10px; white-space: normal; }
 .lab-engine-panel > .button-ghost { width: 100%; margin-top: 5px; }
 .engine-lines { margin-top: 12px; border-top: 1px solid var(--line); }
+.engine-lines-caption { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 0 3px; color: var(--muted); font-size: 8px; font-weight: 700; letter-spacing: .08em; }
+.engine-lines-caption span { color: var(--text-soft); font-size: 9px; letter-spacing: 0; }
 .engine-line { padding: 9px 0; border-bottom: 1px solid var(--line); }
 .engine-line-top { display: flex; align-items: center; gap: 7px; }
 .engine-line-top > strong { flex: 1; color: var(--text-soft); font-size: 10px; }
 .engine-line-top > small { color: var(--text-soft); font-size: 10px; }
 .engine-line > p { margin: 6px 0 0; color: var(--text-soft); font-family: Consolas,monospace; font-size: 11px; line-height: 1.55; }
+.engine-line-top .icon-button:disabled, .engine-replay:disabled { cursor: default; opacity: .55; }
 .position-tools .panel-heading { margin-bottom: 10px; }
 .position-tools > label, .position-tools form > label { margin-top: 9px; }
 .position-tools > .button { width: 100%; margin-top: 7px; }
