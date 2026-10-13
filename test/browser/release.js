@@ -62,17 +62,22 @@ document.querySelector('#status').onclick = run(async () => {
   log(JSON.stringify({ controller: navigator.serviceWorker.controller?.scriptURL, active: reg?.active?.state, waiting: reg?.waiting?.state, installing: reg?.installing?.state, caches: await caches.keys(), memory: performance.memory ? { usedJSHeapSize: performance.memory.usedJSHeapSize, totalJSHeapSize: performance.memory.totalJSHeapSize } : 'unavailable' }, null, 2));
 });
 document.querySelector('#engine').onclick = run(async () => {
+  log('Engine QA: checking cached JavaScript and interrupted WASM download.');
   await cacheEngineAsset(ENGINE_JS);
+  log('Engine QA: JavaScript verified.');
   const names = await caches.keys();
   const cache = await caches.open(names.find((n) => n.startsWith('chessdesk-engine-')));
   await cache.delete(ENGINE_WASM);
+  log('Engine QA: starting cancellable WASM request.');
   const controller = new AbortController();
   try { await cacheEngineAsset(ENGINE_WASM, (p) => { if (p.loaded > 0 && !p.cached) controller.abort(); }, controller.signal); throw new Error('Unexpected success'); }
   catch (error) { check(error.name === 'AbortError', 'engine stream cancellation reports AbortError'); }
+  log('Engine QA: interrupted request settled.');
   // The service worker may independently finish and cache its clone; any stored
   // body is still required to pass the runtime digest before engine startup.
   await cache.put(ENGINE_JS, new Response(new Uint8Array(20670)));
   await cacheEngineAsset(ENGINE_JS);
+  log('Engine QA: repaired and verified JavaScript cache.');
   const repaired = await cache.match(ENGINE_JS);
   const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await repaired.arrayBuffer()))].map((b) => b.toString(16).padStart(2, '0')).join('');
   check(digest === '2278005057f381491f1c9bb3e44c9f5920b3a00bef9759e33cc6582769a1f1fe', 'same-length corrupt engine cache recovers authentic bytes');
@@ -81,6 +86,7 @@ document.querySelector('#engine').onclick = run(async () => {
   const infoUpdates = [];
   const engine = new StockfishEngine({ onInfo: (info) => infoUpdates.push(info) });
   try {
+    log('Engine QA: initializing authentic browser Stockfish 18.');
     const start = performance.now();
     const name = await engine.ensureEngine();
     log(`Browser engine initialization ${Math.round(performance.now() - start)} ms; ${name}`);
@@ -192,9 +198,13 @@ document.querySelector('#board').onclick = run(async () => {
   check(doc.querySelector('.board-controls').getBoundingClientRect().bottom <= doc.querySelector('.mobile-nav').getBoundingClientRect().top, '320 by 568 phone shows board controls above navigation even after feedback');
   clickVisible('Engine'); await nextPaint();
   clickVisible('Search to depth');
-  await wait(() => Boolean(doc.querySelector('.engine-lines .engine-line-top small')), 120000);
+  const finiteSearchStarted = performance.now();
+  // MultiPV updates are provisional while the finite search is still running.
+  // Wait for the completed result before attempting to start a separate live search.
+  await wait(() => doc.querySelector('.engine-lines-caption')?.textContent.includes('BEST LINES') && [...doc.querySelectorAll('.engine-actions button')].some((button) => button.textContent.trim() === 'Run live engine'), 120000);
   check(Number(doc.querySelector('.engine-line-top small').textContent.replace(/^d/, '')) > 0, 'analysis board displays a scored Stockfish search with a real depth');
   check(doc.querySelector('.evaluation-gauge')?.getAttribute('aria-label')?.includes('Stockfish score') && Boolean(doc.querySelector('.board-annotations .engine-suggestion')), 'real engine result updates the White-perspective evaluation bar and legal best-move arrow');
+  log(`Finite mobile-board browser search settled in ${Math.round(performance.now() - finiteSearchStarted)} ms.`);
   clickVisible('Run live engine');
   await wait(() => doc.querySelector('.engine-lines-caption')?.textContent.includes('CURRENT LINES') && doc.querySelector('.engine-actions .button-primary')?.textContent.includes('Stop & keep line'), 120000);
   check(Number(doc.querySelector('.engine-lines-caption span')?.textContent.replace(/^depth\s+/, '')) > 0 && Boolean(doc.querySelector('.board-annotations .engine-suggestion')), 'live Stockfish streams a depth-tagged best move onto the board');
@@ -205,7 +215,7 @@ document.querySelector('#board').onclick = run(async () => {
   await wait(() => doc.querySelector('.engine-lines-caption')?.textContent.includes('CURRENT LINES') && doc.querySelector('.engine-actions .button-primary')?.textContent.includes('Stop & keep line'), 120000);
   check(Boolean(doc.querySelector('.board-annotations .engine-suggestion')) && Number(doc.querySelector('.engine-lines-caption span')?.textContent.replace(/^depth\s+/, '')) > 0, 'live Stockfish automatically analyzes the newly selected position');
   clickVisible('Stop & keep line');
-  await wait(() => doc.querySelector('.engine-lines-caption')?.textContent === 'BEST LINES');
+  await wait(() => doc.querySelector('.engine-lines-caption')?.textContent.includes('BEST LINES'));
   check(doc.querySelector('.engine-lines .engine-line-top strong')?.textContent && Boolean(doc.querySelector('.board-annotations .engine-suggestion')), 'gracefully stopping live analysis keeps its actual Stockfish principal variation');
   doc.querySelector('[data-square="g1"]').click(); await nextPaint();
   doc.querySelector('[data-square="f3"]').click(); await nextPaint();
@@ -218,6 +228,7 @@ document.querySelector('#board').onclick = run(async () => {
   check(doc.querySelector('.engine-terminal').textContent.includes('Black is checkmated') && !/\bM0\b|\bd0\b/.test(doc.querySelector('.lab-engine-panel').textContent), 'terminal panel shows the chess result without M0 or d0');
   await loadFen('7k/5Q2/6K1/8/8/8/8/8 b - - 0 1');
   check(doc.querySelector('.board-lab-status').textContent.includes('Draw by stalemate') && doc.querySelector('.player-row-bottom .pill').textContent.trim() === 'Stalemate', 'stalemate is labeled as a draw in both board contexts');
+  log('BOARD_BROWSER_QA_COMPLETE');
 });
 
 document.querySelector('#lessons').onclick = run(async () => {

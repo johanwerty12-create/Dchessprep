@@ -51,3 +51,15 @@ test('offline navigation serves installed shell and uncached engine fails explic
   assert.equal(await (await w.request('/review', 'navigate')).text(), 'offline shell');
   assert.equal((await w.request('/engine/stockfish.wasm', 'cors')).status, 503);
 });
+
+test('offline PWA serves its cached icons and manifest', async () => {
+  const w = worker({ offline: true });
+  w.stores.set('chessdesk-app-new', new Map([
+    ['https://qa.example/icons/icon.svg', new Response('cached mark')],
+    ['https://qa.example/icons/icon-192.png', new Response('cached install icon')],
+    ['https://qa.example/manifest.webmanifest', new Response('{"name":"Chessdesk"}')],
+  ]));
+  assert.equal(await (await w.request('/icons/icon.svg', 'no-cors')).text(), 'cached mark');
+  assert.equal(await (await w.request('/icons/icon-192.png', 'no-cors')).text(), 'cached install icon');
+  assert.equal(await (await w.request('/manifest.webmanifest', 'cors')).text(), '{"name":"Chessdesk"}');
+});

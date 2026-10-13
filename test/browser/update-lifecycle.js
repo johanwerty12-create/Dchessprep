@@ -36,6 +36,8 @@ action('#activated', async () => {
   const keys = await caches.keys();
   check(keys.filter(k => k.startsWith('chessdesk-app-')).length === 1 && keys.includes(baseline.engine), 'activation removes stale app cache and preserves engine cache');
   check(normalized(await listRecords()) === baseline.records, 'activation preserves every saved record exactly');
+  const activeApp = keys.find((key) => key.startsWith('chessdesk-app-'));
+  localStorage.setItem(key, JSON.stringify({ ...baseline, app: activeApp }));
 });
 action('#failed', async () => {
   const baseline = JSON.parse(localStorage.getItem(key));

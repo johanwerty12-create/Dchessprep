@@ -1,5 +1,6 @@
 import { listRecords } from '../../src/db.js';
 import { duePracticeCards } from '../../src/practice.js';
+import { withWindowConfirm } from '../../scripts/browser-check-utils.js';
 const output = document.querySelector('#output');
 const log = (s) => output.textContent += s + '\n';
 const check = (ok, s) => { if (!ok) throw new Error(s); log('PASS ' + s); };
@@ -39,9 +40,14 @@ document.querySelector('#run').onclick = async () => {
     await workspace('Game review'); await click('Import PGN');
     await fill('PGN', '[Event "QA Acceptance Scholar"]\n[Date "????.??.??"]\n[White "QA Acceptance Player"]\n[Black "QA Acceptance Black"]\n[Result "1-0"]\n\n1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0');
     await fill('Saved name', 'QA Acceptance Scholar'); await fill('Opponent name', 'QA Acceptance Black'); await fill('Opponent’s color', 'b'); await click('Validate & save');
-    await click('Import game'); await fill('PGN', '[Event "QA Acceptance Reti A"]\n[White "QA Acceptance Player"]\n[Black "QA Acceptance Black"]\n[Result "*"]\n\n1. Nf3 d5 2. g3 Nf6 3. Bg2 g6 4. O-O Bg7 *\n\n[Event "QA Acceptance Reti B"]\n[White "QA Acceptance Player"]\n[Black "QA Acceptance Black"]\n[Result "*"]\n\n1. g3 d5 2. Nf3 Nf6 3. Bg2 g6 4. O-O Bg7 *');
+    const retiBatch = '[Event "QA Acceptance Reti A"]\n[White "QA Acceptance Player"]\n[Black "QA Acceptance Black"]\n[Result "*"]\n\n1. Nf3 d5 2. g3 Nf6 3. Bg2 g6 4. O-O Bg7 *\n\n[Event "QA Acceptance Reti B"]\n[White "QA Acceptance Player"]\n[Black "QA Acceptance Black"]\n[Result "*"]\n\n1. g3 d5 2. Nf3 Nf6 3. Bg2 g6 4. O-O Bg7 *';
+    await click('Import game'); await fill('PGN', retiBatch);
     await fill('Opponent name', 'QA Acceptance Black'); await fill('Opponent’s color', 'b'); await click('Validate & save');
     check((await listRecords()).filter((r) => r.kind === 'game').length === 3, 'several legal games imported');
+    await wait(() => !doc.querySelector('[role="dialog"]')); await click('Import game'); await fill('PGN', retiBatch);
+    await fill('Opponent name', 'QA Acceptance Black'); await fill('Opponent’s color', 'b'); await click('Validate & save');
+    await wait(() => doc.body.textContent.includes('No new games saved. 2 exact duplicates were already in your library.'));
+    check((await listRecords()).filter((r) => r.kind === 'game').length === 3, 're-imported multi-game PGN reports both duplicates and keeps one copy of each');
     // IndexedDB commits before the import handler finishes refreshing React state.
     // Wait for the dialog to close before issuing a navigation action.
     await wait(() => !doc.querySelector('[role="dialog"]')); await paint();
@@ -93,17 +99,18 @@ document.querySelector('#run').onclick = async () => {
     win.URL.createObjectURL = (blob) => { exported = blob; return createUrl.call(win.URL,blob); };
     await click('Export backup'); await wait(() => exported); const backup = JSON.parse(await exported.text()); win.URL.createObjectURL = createUrl;
     check(backup.records.length === (await listRecords()).length, 'actual export contains every saved record');
-    const originalConfirm = win.confirm;
     const current = (await listRecords()).find((r) => r.id === game.id); check(current.name === 'QA Acceptance Scholar' && current.pgn.includes('Qxf7#'), 'deletion identity and legal game confirmed');
-    win.confirm = (message) => { if (!message.includes('QA Acceptance Scholar')) throw new Error('Unexpected destructive action'); return true; };
-    await click('Delete QA Acceptance Scholar'); win.confirm = originalConfirm;
-    await wait(async () => !(await listRecords()).some((r) => r.id === game.id));
+    await withWindowConfirm(win, (message) => { if (!message.includes('QA Acceptance Scholar')) throw new Error('Unexpected destructive action'); return true; }, async () => {
+      await click('Delete QA Acceptance Scholar');
+      await wait(async () => !(await listRecords()).some((r) => r.id === game.id));
+    });
     records = await listRecords(); check(!records.some((r) => r.gameId === game.id), 'only identified game and its linked reviews/training are removed'); check(records.some((r) => r.kind === 'tournament') && records.some((r) => r.kind === 'repertoire'), 'unrelated tournament and repertoire remain');
     const restore = async (text) => { const input = doc.querySelector('[aria-label="Choose Chessdesk backup"]'); const dt = new win.DataTransfer(); dt.items.add(new win.File([text],'qa-backup.json',{type:'application/json'})); input.files = dt.files; input.dispatchEvent(new win.Event('change',{bubbles:true})); await paint(); };
     const remaining = JSON.stringify(await listRecords()); await restore('{broken'); check(JSON.stringify(await listRecords()) === remaining, 'malformed restore leaves records unchanged');
-    win.confirm = (message) => { if (!message.startsWith('Replace the local library')) throw new Error('Unexpected confirm'); return true; };
-    await restore(JSON.stringify(backup)); win.confirm = originalConfirm;
-    await wait(async () => (await listRecords()).length === backup.records.length);
+    await withWindowConfirm(win, (message) => { if (!message.startsWith('Replace the local library')) throw new Error('Unexpected confirm'); return true; }, async () => {
+      await restore(JSON.stringify(backup));
+      await wait(async () => (await listRecords()).length === backup.records.length);
+    });
     records = await listRecords(); const normalize = (rs) => JSON.stringify([...rs].sort((a,b)=>a.id.localeCompare(b.id)));
     check(normalize(records) === normalize(backup.records), 'actual restore preserves exact games, reviews, repertoire, tournament and practice records');
     frame.contentWindow.location.reload(); await new Promise((r) => frame.onload = r); await wait(() => frame.contentDocument.querySelector('.daily-practice'));

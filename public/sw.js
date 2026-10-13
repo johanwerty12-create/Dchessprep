@@ -52,7 +52,7 @@ self.addEventListener('fetch', (event) => {
     })());
     return;
   }
-  if (pathname.startsWith('/assets/') || pathname.startsWith('/pieces/')) {
+  if (pathname.startsWith('/assets/') || pathname.startsWith('/pieces/') || pathname.startsWith('/icons/') || pathname === '/manifest.webmanifest') {
     event.respondWith((async () => {
       const cache = await caches.open(APP_CACHE);
       const cached = await cache.match(request);
