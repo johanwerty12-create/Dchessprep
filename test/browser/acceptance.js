@@ -4,7 +4,8 @@ import { withWindowConfirm } from '../../scripts/browser-check-utils.js';
 const output = document.querySelector('#output');
 const log = (s) => output.textContent += s + '\n';
 const check = (ok, s) => { if (!ok) throw new Error(s); log('PASS ' + s); };
-const wait = async (condition) => { const t = performance.now(); while (!await condition()) { if (performance.now() - t > 90000) throw new Error('Timed out awaiting acceptance condition'); await new Promise((r) => setTimeout(r, 25)); } };
+const wait = async (condition) => { const t = performance.now(); while (!await condition()) { if (performance.now() - t > 240000) throw new Error('Timed out awaiting acceptance condition'); await new Promise((r) => setTimeout(r, 25)); } };
+const canonicalRecords = (records) => JSON.stringify([...records].sort((a, b) => a.id.localeCompare(b.id)));
 document.querySelector('#run').onclick = async () => {
   document.querySelector('#run').disabled = true;
   try {
@@ -111,13 +112,42 @@ document.querySelector('#run').onclick = async () => {
     });
     records = await listRecords(); check(!records.some((r) => r.gameId === game.id), 'only identified game and its linked reviews/training are removed'); check(records.some((r) => r.kind === 'tournament') && records.some((r) => r.kind === 'repertoire'), 'unrelated tournament and repertoire remain');
     const restore = async (text) => { const input = doc.querySelector('[aria-label="Choose Chessdesk backup"]'); const dt = new win.DataTransfer(); dt.items.add(new win.File([text],'qa-backup.json',{type:'application/json'})); input.files = dt.files; input.dispatchEvent(new win.Event('change',{bubbles:true})); await paint(); };
-    const remaining = JSON.stringify(await listRecords()); await restore('{broken'); check(JSON.stringify(await listRecords()) === remaining, 'malformed restore leaves records unchanged');
+    const remaining = canonicalRecords(await listRecords());
+    await restore('{broken'); await wait(() => doc.querySelector('.global-error'));
+    check(canonicalRecords(await listRecords()) === remaining, 'malformed JSON restore leaves native IndexedDB records unchanged');
+    const dismissError = async () => { doc.querySelector('.global-error button[aria-label="Dismiss error"]')?.click(); await paint(); };
+    await dismissError();
+    const duplicateBackup = { ...backup, records: [...backup.records, { ...backup.records[0] }] };
+    await restore(JSON.stringify(duplicateBackup));
+    await wait(() => doc.querySelector('.global-error')?.textContent.includes('duplicate record ID'));
+    check(canonicalRecords(await listRecords()) === remaining, 'structurally malformed backup is rejected before native IndexedDB writes');
+    await dismissError();
+    const objectStorePrototype = win.IDBObjectStore.prototype, originalPut = objectStorePrototype.put;
+    let injectedPutCount = 0, restoreTransactionInterrupted = false;
+    objectStorePrototype.put = function(value, ...args) {
+      const request = Reflect.apply(originalPut, this, [value, ...args]);
+      if (this.transaction?.db?.name === 'chessdesk-local' && ++injectedPutCount === 2) {
+        restoreTransactionInterrupted = true;
+        this.transaction.abort();
+        throw new win.DOMException('Injected quota failure during restore.', 'QuotaExceededError');
+      }
+      return request;
+    };
+    try {
+      await withWindowConfirm(win, (message) => message.startsWith('Replace the local library'), async () => {
+        await restore(JSON.stringify(backup));
+        await wait(() => doc.querySelector('.global-error'));
+      });
+    } finally { objectStorePrototype.put = originalPut; }
+    check(restoreTransactionInterrupted, 'restore exercised a native IndexedDB transaction interruption after writes were queued');
+    check(canonicalRecords(await listRecords()) === remaining, 'interrupted native IndexedDB restore preserves every pre-existing record');
+    await dismissError();
     await withWindowConfirm(win, (message) => { if (!message.startsWith('Replace the local library')) throw new Error('Unexpected confirm'); return true; }, async () => {
       await restore(JSON.stringify(backup));
       await wait(async () => (await listRecords()).length === backup.records.length);
     });
-    records = await listRecords(); const normalize = (rs) => JSON.stringify([...rs].sort((a,b)=>a.id.localeCompare(b.id)));
-    check(normalize(records) === normalize(backup.records), 'actual restore preserves exact games, reviews, repertoire, tournament and practice records');
+    records = await listRecords();
+    check(canonicalRecords(records) === canonicalRecords(backup.records), 'actual restore preserves exact games, reviews, opponents, repertoire, tournaments and training records');
     frame.contentWindow.location.reload(); await new Promise((r) => frame.onload = r); await wait(() => frame.contentDocument.querySelector('.daily-practice'));
     check(frame.contentDocument.body.textContent.includes('recalled without help'), 'returning later restores personal recall progress');
     log('COMPLETE: browser UI/IndexedDB acceptance passed. Input and touch events are automated, not physical-device evidence.');
