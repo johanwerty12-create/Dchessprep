@@ -119,7 +119,8 @@ test('production UI backup round-trip and genuine offline Stockfish analysis', a
   await page.reload({ waitUntil: 'domcontentloaded' });
   await expect(page.locator('.offline-pill.is-offline')).toBeVisible();
   await page.locator('nav[aria-label="Main navigation"] button[aria-label="Game review"]').click();
-  const savedGame = page.locator('.saved-game-card').filter({ hasText: 'QA Acceptance Player' });
+  const savedGame = page.locator('.saved-game-card').filter({ hasText: 'e4 e5 Qh5 Nc6 Bc4 Nf6 Qxf7#' });
+  await expect(savedGame).toHaveCount(1);
   await expect(savedGame).toBeVisible();
   await savedGame.click();
   await expect(page.locator('.review-workspace')).toContainText('QA Acceptance Scholar');
