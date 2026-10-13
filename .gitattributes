@@ -1,0 +1,2 @@
+# Preserve the pinned upstream SVG bytes on every checkout platform.
+public/pieces/chessnut/*.svg text eol=crlf
